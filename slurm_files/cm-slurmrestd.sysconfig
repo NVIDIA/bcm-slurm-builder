@@ -1,0 +1,1 @@
+SLURMRESTD_OPTIONS=-u daemon -a rest_auth/jwt 127.0.0.1:6820

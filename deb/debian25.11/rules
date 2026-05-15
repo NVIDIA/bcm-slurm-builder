@@ -1,0 +1,256 @@
+#!/usr/bin/make -f
+
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+NPROC := $(shell nproc)
+ARCH := $(shell uname -m)
+
+ROCM_SMI=--with-rsmi=/cm/local/apps/rocm-smi/current/rocm_smi
+ifeq ($(ARCH),aarch64)
+	ROCM_SMI=""
+endif
+
+SLURM_MAJOR := SLURM_MAJOR_VERSION
+ROOT_DIR := /cm/local/apps/slurm
+APP_DIR := $(ROOT_DIR)/$(SLURM_MAJOR)
+TEMPLATES_DIR := $(APP_DIR)/templates
+SCRIPTS_DIR := $(APP_DIR)/scripts
+DOC_DIR=$(APP_DIR)/shared/doc
+LOCAL_VAR_DIR := $(ROOT_DIR)/var
+
+.PHONY: build
+build:
+	patch -p1 < scontrol.patch || exit 1
+	cp -a src/plugins/select/cons_tres/ src/plugins/select/cons_tres_org/
+	if [ -f autoconf-fix.patch ]; then \
+		patch -p0 < autoconf-fix.patch || exit 1; \
+	else \
+		echo autoconf-fix.patch is missing. Skipping it.; \
+	fi
+	if [ -f prs-select.patch ]; then \
+		patch -p1 < prs-select.patch || exit 1; \
+	else \
+		echo prs-select.patch is missing. Skipping it.; \
+	fi
+	patch -p1 < systemd-units.patch || exit 1
+	autoconf
+	# workaround for a consistent PAM_DIR in case /lib64/security exists (e.g. a BCM cluster, but not autobuild-worker image)
+	mkdir -p /lib/security
+	./configure \
+		--disable-dependency-tracking \
+		--prefix=$(APP_DIR) \
+		--exec-prefix=$(APP_DIR) \
+		--bindir=$(APP_DIR)/bin \
+		--sbindir=$(APP_DIR)/sbin \
+		--sysconfdir=/etc/slurm \
+		--datadir=$(APP_DIR)/share \
+		--includedir=$(APP_DIR)/include \
+		--libdir=$(APP_DIR)/lib64 \
+		--libexecdir=$(APP_DIR)/libexec \
+		--localstatedir=/var \
+		--sharedstatedir=/var/lib \
+		--mandir=$(APP_DIR)/man \
+		--infodir=$(APP_DIR)/info \
+		--with-hwloc=/cm/local/apps/hwloc2/current \
+		--with-munge \
+		--enable-pam \
+		--with-pam-dir=/lib/security \
+		--without-rpath \
+		--enable-slurmrestd \
+		--with-ucx=/cm/local/apps/ucx/current \
+		--with-pmix=/cm/local/apps/cm-pmix3/current:/cm/local/apps/cm-pmix4/current \
+		$(ROCM_SMI)
+	make -j$(NPROC)
+
+
+.PHONY: install
+install:
+	make DESTDIR=$(CURDIR)/debian/slurm$(SLURM_MAJOR) install
+	make DESTDIR=$(CURDIR)/debian/slurm$(SLURM_MAJOR) install-contrib
+
+	#slurm (main package)
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/cm
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/prologs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/epilogs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/spool
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/pre-post-job-logs/all-post-jobs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/pre-post-job-logs/all-pre-jobs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/pre-post-job-logs/failed-post-jobs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(LOCAL_VAR_DIR)/pre-post-job-logs/failed-pre-jobs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(SCRIPTS_DIR)
+	cp  $(CURDIR)/cm-slurm.module        $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)/slurm.module.template
+	cp  $(CURDIR)/cm-slurm.conf          $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)/slurm.conf.template
+	cp  $(CURDIR)/cm-gres.conf           $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)/gres.conf.template
+	cp  $(CURDIR)/cm-cgroup.conf         $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)/cgroup.conf.template
+	cp  $(CURDIR)/cm-slurmdbd.conf       $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)/slurmdbd.conf.template
+	cp  $(CURDIR)/cm-restore-db-password $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(SCRIPTS_DIR)
+	cp  $(CURDIR)/slurm-backup           $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(SCRIPTS_DIR)
+	cp -r $(CURDIR)/power                $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(SCRIPTS_DIR)
+	cp -r $(CURDIR)/doc/man*             $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)
+	cd $(CURDIR)/debian/slurm$(SLURM_MAJOR)/cm/local/apps/slurm; ln -sf $(SLURM_MAJOR) current
+
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/Makefile*
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/man1/Makefile*
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/man3/Makefile*
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/man5/Makefile*
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/man8/Makefile*
+	rm -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/man/man2html.py
+
+	# /usr/bin/install docs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/AUTHORS          $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/CHANGELOG.md     $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/README.md       $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/RELEASE_NOTES.md $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/DISCLAIMER       $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+	cp $(CURDIR)/COPYING          $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(DOC_DIR)
+
+	# Pyxis helper files
+	cp $(CURDIR)/install-pyxis.sh $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(SCRIPTS_DIR)
+	cp $(CURDIR)/*.template       $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)
+	cp $(CURDIR)/*.jinja2         $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(TEMPLATES_DIR)
+
+	#slurm-slurmd
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd/$(APP_DIR)/sbin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd/etc/logrotate.d
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd/usr/lib/systemd/system/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/${APP_DIR}/sbin/slurmd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd$(APP_DIR)/sbin/
+	mv $(CURDIR)/etc/slurmd.service $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd/usr/lib/systemd/system/slurmd.service
+	cp $(CURDIR)/cm-slurmd.logrotate $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmd/etc/logrotate.d/slurmd
+
+	#slurm-slurmctld
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld/$(APP_DIR)/sbin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld/usr/lib/systemd/system/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld/etc/logrotate.d
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/${APP_DIR}/sbin/slurmctld $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld$(APP_DIR)/sbin/
+	cp $(CURDIR)/etc/slurmctld.service $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld/usr/lib/systemd/system/slurmctld.service
+	cp $(CURDIR)/cm-slurmctld.logrotate $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmctld/etc/logrotate.d/slurmctld
+
+	#slurm-slurmdbd
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd/$(APP_DIR)/sbin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd/usr/lib/systemd/system/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd/etc/logrotate.d
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/${APP_DIR}/sbin/slurmdbd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd$(APP_DIR)/sbin/
+	mv $(CURDIR)/etc/slurmdbd.service $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd/usr/lib/systemd/system/slurmdbd.service
+	test -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.la && chmod 644 $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.la
+	test -f $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libslurm.la && chmod 644 $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libslurm.la
+	cp $(CURDIR)/cm-slurmdbd.logrotate $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmdbd/etc/logrotate.d/slurmdbd
+
+	#slurm-devel
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-devel$(APP_DIR)/include/slurm
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/include/slurm/* $(CURDIR)/debian/slurm$(SLURM_MAJOR)-devel$(APP_DIR)/include/slurm/
+	rm -rf $(CURDIR)/debian/slurm$(SLURM_MAJOR)$(APP_DIR)/include/
+
+	#slurm-openlava
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-openlava$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/bjobs $(CURDIR)/debian/slurm$(SLURM_MAJOR)-openlava/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/bkill $(CURDIR)/debian/slurm$(SLURM_MAJOR)-openlava/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/bsub  $(CURDIR)/debian/slurm$(SLURM_MAJOR)-openlava/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/lsid  $(CURDIR)/debian/slurm$(SLURM_MAJOR)-openlava/$(APP_DIR)/bin/
+
+	#slurm-torque
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/lib64/slurm
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/slurm/*_pbs.so $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/lib64/slurm/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/generate_pbs_nodefile $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/mpiexec   $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/pbsnodes  $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qalter    $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qdel      $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qhold     $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qrerun    $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qrls      $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qstat     $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/qsub      $(CURDIR)/debian/slurm$(SLURM_MAJOR)-torque/$(APP_DIR)/bin/
+
+	#slurm-contribs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/man/man1
+	mv $(CURDIR)/contribs/sjstat                                       $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/seff        $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/sjobexitmod $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/bin/smail       $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin
+	sed -i "s:MAIL=/bin/mail:MAIL=/usr/bin/mail:g" $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin/smail
+	$(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/bin/sjstat --roff > $(CURDIR)/debian/slurm$(SLURM_MAJOR)-contribs/$(APP_DIR)/man/man1/sjstat.1
+
+	#slurm-pam
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-pam/lib/security/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/lib/security/*.so $(CURDIR)/debian/slurm$(SLURM_MAJOR)-pam/lib/security/
+	rm -fr $(CURDIR)/debian/slurm$(SLURM_MAJOR)/lib
+
+	#slurm-perlapi
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-perlapi/$(APP_DIR)
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib $(CURDIR)/debian/slurm$(SLURM_MAJOR)-perlapi/$(APP_DIR)/
+
+	#slurm-sackd
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-sackd/$(APP_DIR)/sbin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-sackd/usr/lib/systemd/system/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/${APP_DIR}/sbin/sackd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-sackd/$(APP_DIR)/sbin/
+	cp $(CURDIR)/etc/sackd.service $(CURDIR)/debian/slurm$(SLURM_MAJOR)-sackd/usr/lib/systemd/system/sackd.service
+
+	#slurm-libpmi
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.a         $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.so.0.0.0  $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi2.a        $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi2.so.0.0.0 $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/
+	cd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/ ; ln -sf libpmi.so.0.0.0 libpmi.so
+	cd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/ ; ln -sf libpmi.so.0.0.0 libpmi.so.0
+	cd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/ ; ln -sf libpmi2.so.0.0.0 libpmi2.so
+	cd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-libpmi/$(APP_DIR)/lib64/ ; ln -sf libpmi2.so.0.0.0 libpmi2.so.0
+	rm $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.so
+	rm $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi.so.0
+	rm $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi2.so
+	rm $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/libpmi2.so.0
+
+	#slurm-slurmrestd
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/$(APP_DIR)/sbin/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/$(SCRIPTS_DIR)
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/usr/lib/systemd/system/
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/etc/sysconfig
+	mv $(CURDIR)/cm-slurmrestd.sysconfig $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/etc/sysconfig/slurmrestd
+	mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/${APP_DIR}/sbin/slurmrestd $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/$(APP_DIR)/sbin/
+	mv $(CURDIR)/cm-slurmrestd-setup $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/$(SCRIPTS_DIR)/cm-slurmrestd-setup
+	mv $(CURDIR)/cm-slurmrestd.service $(CURDIR)/debian/slurm$(SLURM_MAJOR)-slurmrestd/usr/lib/systemd/system/slurmrestd.service
+
+	#slurm-prs
+	mkdir -p $(CURDIR)/debian/slurm$(SLURM_MAJOR)-prs/$(APP_DIR)/lib64/slurm/
+	test -f prs-select.patch && mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/slurm/select_gnl_cons_tres.a $(CURDIR)/debian/slurm$(SLURM_MAJOR)-prs/$(APP_DIR)/lib64/slurm/ || true
+	test -f prs-select.patch && mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/slurm/select_gnl_cons_tres.la $(CURDIR)/debian/slurm$(SLURM_MAJOR)-prs/$(APP_DIR)/lib64/slurm/ || true
+	test -f prs-select.patch && mv $(CURDIR)/debian/slurm$(SLURM_MAJOR)/$(APP_DIR)/lib64/slurm/select_gnl_cons_tres.so $(CURDIR)/debian/slurm$(SLURM_MAJOR)-prs/$(APP_DIR)/lib64/slurm/ || true
+
+.PHONY: binary-indep
+binary-indep: build install
+
+
+.PHONY: binary-arch
+binary-arch: build install
+	dh_installdebconf
+	dh_compress
+	dh_fixperms
+	dh_gencontrol
+	dh_md5sums
+	dh_installdeb
+	dh_builddeb
+
+
+.PHONY: binary
+binary: binary-arch
+
+
+.PHONY: clean
+clean:

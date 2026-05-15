@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+#
+# This script is used to configure slurmrestd service with JWT authentication
+# for test purposes. The script must be executed on Slurm server node.
+#
+
+set -x
+
+if [ -z $SLURM_CONF ]; then
+    echo "SLURM_CONF is not set"
+    exit 1
+fi
+
+slurmrestapidir="/etc/systemd/system/slurmrestd.service.d"
+slurm_conf_dir=$(dirname $SLURM_CONF)
+slurm_conf=$slurm_conf_dir/slurm.conf
+drop_in_file=$slurmrestapidir/99-cmd.conf
+jwt_key=$slurm_conf_dir/jwt.key
+
+echo "Setup slurmrestd, jwt_key=$jwt_key"
+
+install -m 0600 -o slurm -g slurm <(dd if=/dev/random bs=32 count=1) $jwt_key
+
+if grep -q "^AuthAltTypes=" $slurm_conf; then
+    sed -i "s:AuthAltTypes=.*:AuthAltTypes=auth/jwt:g" $slurm_conf
+else
+    echo AuthAltTypes=auth/jwt >> $slurm_conf
+fi
+
+if grep -q "^AuthAltParameters=" $slurm_conf; then
+    sed -i "s:AuthAltParameters=.*:AuthAltParameters=jwt_key=$jwt_key:g" $slurm_conf
+else
+    echo AuthAltParameters=jwt_key=$jwt_key >> $slurm_conf
+fi
+
+systemctl restart slurmctld.service
+
+mkdir -p $slurmrestapidir
+echo "[Service]" > $drop_in_file
+echo "Environment=SLURM_CONF=$SLURM_CONF" >> $drop_in_file
+
+. /etc/os-release
+if [ "$ID" == "sles" ]; then
+    # starting with slurm 25.05, there is a _hard_ requirement for user
+    # used for slurmrestd (currently, user daemon)
+    # to not be present in other groups
+    echo "Making sure daemon user is not in bin group"
+    gpasswd -d daemon bin 2> /dev/null || /bin/true
+fi
+
+exit 0

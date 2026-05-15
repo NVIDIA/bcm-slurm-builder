@@ -1,0 +1,1846 @@
+From 1e9171f1bdf6ea9d8b87ed1a18bd068327251b7b Mon Sep 17 00:00:00 2001
+From: Hadar Sivan <hsivan@nvidia.com>
+Date: Sun, 2 Feb 2025 12:09:34 +0000
+Subject: [PATCH] Add support for global resource allocation via external
+ server communication
+
+This commit introduces the select_gnl_cons_tres.so plugin, which checks
+whether a job can be allocated a global resource, such as power, by
+communicating with an external server that monitors this resource.
+Key changes:
+- The modified plugin is built under the new name select_gnl_cons_tres.so,
+where the name stands for global and local consumable trackable resources.
+- After cloning the vanilla Slurm repository, it is recommended to copy
+the cons_tres folder to cons_tres_org and apply the patch that adds
+global resource (globres) support. After applying the patch, compiling
+will produce both the original select_cons_tres.so and the modified
+select_gnl_cons_tres.so.
+
+Note: this change includes a temporary workaround to enable gnl_cons_tres
+Select plugin.
+We use the SELECT_PLUGIN_CONS_RES plugin ID (formerly for cons_res,
+which is no longer in use) for gnl_cons_tres.
+This is a temporary solution. In the future, once this code is merged
+into the official SchedMD codebase, it will become part of the
+cons_tres plugin.
+---
+ src/plugins/select/Makefile.am                |   2 +-
+ src/plugins/select/Makefile.in                |   2 +-
+ src/plugins/select/cons_tres/Makefile.am      |  12 +-
+ src/plugins/select/cons_tres/Makefile.in      |  45 +-
+ src/plugins/select/cons_tres/globres.c        | 977 ++++++++++++++++++
+ src/plugins/select/cons_tres/globres.h        |  56 +
+ src/plugins/select/cons_tres/job_test.c       | 204 +++-
+ .../select/cons_tres/select_cons_tres.c       |  23 +-
+ .../select/cons_tres/select_cons_tres.h       |   2 +
+ 9 files changed, 1261 insertions(+), 62 deletions(-)
+ create mode 100644 src/plugins/select/cons_tres/globres.c
+ create mode 100644 src/plugins/select/cons_tres/globres.h
+
+diff --git a/src/plugins/select/Makefile.am b/src/plugins/select/Makefile.am
+index 94a173b717..00609c0e81 100644
+--- a/src/plugins/select/Makefile.am
++++ b/src/plugins/select/Makefile.am
+@@ -1,6 +1,6 @@
+ # Makefile for node selection plugins
+ 
+-SUBDIRS = cons_tres linear
++SUBDIRS = $(shell find . -maxdepth 1 -type d -not -name .)
+ 
+ # Each plugin here needs a plugin_id.
+ # Here are the current plugin_ids for each plugin.
+diff --git a/src/plugins/select/Makefile.in b/src/plugins/select/Makefile.in
+index c4c363a7f0..6258f2d7c5 100644
+--- a/src/plugins/select/Makefile.in
++++ b/src/plugins/select/Makefile.in
+@@ -466,7 +466,7 @@ target_vendor = @target_vendor@
+ top_build_prefix = @top_build_prefix@
+ top_builddir = @top_builddir@
+ top_srcdir = @top_srcdir@
+-SUBDIRS = cons_tres linear
++SUBDIRS = $(shell find . -maxdepth 1 -type d -not -name .)
+ all: all-recursive
+ 
+ .SUFFIXES:
+diff --git a/src/plugins/select/cons_tres/Makefile.am b/src/plugins/select/cons_tres/Makefile.am
+index a64a716ed1..742904f30b 100644
+--- a/src/plugins/select/cons_tres/Makefile.am
++++ b/src/plugins/select/cons_tres/Makefile.am
+@@ -1,17 +1,18 @@
+-# Makefile for select/cons_tres plugin
++# Makefile for select/gnl_cons_tres plugin
+ 
+ AUTOMAKE_OPTIONS = foreign
+ 
+ PLUGIN_FLAGS = -module -avoid-version --export-dynamic
+ 
+-AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir)
++AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir) $(LIBCURL_CPPFLAGS)
+ 
+-pkglib_LTLIBRARIES = select_cons_tres.la
++pkglib_LTLIBRARIES = select_gnl_cons_tres.la
+ 
+ # Trackable RESources selection plugin.
+-select_cons_tres_la_SOURCES = \
++select_gnl_cons_tres_la_SOURCES = \
+ 	cons_helpers.c cons_helpers.h \
+ 	dist_tasks.c dist_tasks.h \
++	globres.c globres.h \
+ 	gres_sock_list.c gres_sock_list.h \
+ 	gres_select_filter.c gres_select_filter.h \
+ 	gres_select_util.c gres_select_util.h \
+@@ -20,4 +21,5 @@ select_cons_tres_la_SOURCES = \
+ 	node_data.c node_data.h \
+ 	part_data.c part_data.h \
+ 	select_cons_tres.c select_cons_tres.h
+-select_cons_tres_la_LDFLAGS = $(PLUGIN_FLAGS)
++select_gnl_cons_tres_la_LDFLAGS = $(PLUGIN_FLAGS)
++select_gnl_cons_tres_la_LIBADD = $(LIBCURL)
+diff --git a/src/plugins/select/cons_tres/Makefile.in b/src/plugins/select/cons_tres/Makefile.in
+index cfcdedacf9..5d1c5bc22a 100644
+--- a/src/plugins/select/cons_tres/Makefile.in
++++ b/src/plugins/select/cons_tres/Makefile.in
+@@ -14,7 +14,7 @@
+ 
+ @SET_MAKE@
+ 
+-# Makefile for select/cons_tres plugin
++# Makefile for select/gnl_cons_tres plugin
+ 
+ VPATH = @srcdir@
+ am__is_gnu_make = { \
+@@ -184,19 +184,20 @@ am__uninstall_files_from_dir = { \
+   }
+ am__installdirs = "$(DESTDIR)$(pkglibdir)"
+ LTLIBRARIES = $(pkglib_LTLIBRARIES)
+-select_cons_tres_la_LIBADD =
+-am_select_cons_tres_la_OBJECTS = cons_helpers.lo dist_tasks.lo \
+-	gres_sock_list.lo gres_select_filter.lo gres_select_util.lo \
+-	job_resources.lo job_test.lo node_data.lo part_data.lo \
+-	select_cons_tres.lo
+-select_cons_tres_la_OBJECTS = $(am_select_cons_tres_la_OBJECTS)
++am__DEPENDENCIES_1 =
++select_gnl_cons_tres_la_DEPENDENCIES = $(am__DEPENDENCIES_1)
++am_select_gnl_cons_tres_la_OBJECTS = cons_helpers.lo dist_tasks.lo \
++	globres.lo gres_sock_list.lo gres_select_filter.lo gres_select_util.lo \
++	job_resources.lo job_test.lo node_data.lo \
++	part_data.lo select_cons_tres.lo
++select_gnl_cons_tres_la_OBJECTS = $(am_select_gnl_cons_tres_la_OBJECTS)
+ AM_V_lt = $(am__v_lt_@AM_V@)
+ am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
+ am__v_lt_0 = --silent
+ am__v_lt_1 = 
+-select_cons_tres_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
++select_gnl_cons_tres_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CC \
+ 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CCLD) \
+-	$(AM_CFLAGS) $(CFLAGS) $(select_cons_tres_la_LDFLAGS) \
++	$(AM_CFLAGS) $(CFLAGS) $(select_gnl_cons_tres_la_LDFLAGS) \
+ 	$(LDFLAGS) -o $@
+ AM_V_P = $(am__v_P_@AM_V@)
+ am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
+@@ -214,11 +215,12 @@ DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir) -I$(top_builddir)/slurm
+ depcomp = $(SHELL) $(top_srcdir)/auxdir/depcomp
+ am__maybe_remake_depfiles = depfiles
+ am__depfiles_remade = ./$(DEPDIR)/cons_helpers.Plo \
+-	./$(DEPDIR)/dist_tasks.Plo ./$(DEPDIR)/gres_select_filter.Plo \
+-	./$(DEPDIR)/gres_select_util.Plo \
++	./$(DEPDIR)/dist_tasks.Plo ./$(DEPDIR)/globres.Plo \
++	./$(DEPDIR)/gres_select_filter.Plo ./$(DEPDIR)/gres_select_util.Plo \
+ 	./$(DEPDIR)/gres_sock_list.Plo ./$(DEPDIR)/job_resources.Plo \
+ 	./$(DEPDIR)/job_test.Plo ./$(DEPDIR)/node_data.Plo \
+-	./$(DEPDIR)/part_data.Plo ./$(DEPDIR)/select_cons_tres.Plo
++	./$(DEPDIR)/part_data.Plo \
++	./$(DEPDIR)/select_cons_tres.Plo
+ am__mv = mv -f
+ COMPILE = $(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(AM_CPPFLAGS) \
+ 	$(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS)
+@@ -238,7 +240,7 @@ AM_V_CCLD = $(am__v_CCLD_@AM_V@)
+ am__v_CCLD_ = $(am__v_CCLD_@AM_DEFAULT_V@)
+ am__v_CCLD_0 = @echo "  CCLD    " $@;
+ am__v_CCLD_1 = 
+-SOURCES = $(select_cons_tres_la_SOURCES)
++SOURCES = $(select_gnl_cons_tres_la_SOURCES)
+ am__can_run_installinfo = \
+   case $$AM_UPDATE_INFO_DIR in \
+     n|no|NO) false;; \
+@@ -523,13 +525,14 @@ top_builddir = @top_builddir@
+ top_srcdir = @top_srcdir@
+ AUTOMAKE_OPTIONS = foreign
+ PLUGIN_FLAGS = -module -avoid-version --export-dynamic
+-AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir)
+-pkglib_LTLIBRARIES = select_cons_tres.la
++AM_CPPFLAGS = -DSLURM_PLUGIN_DEBUG -I$(top_srcdir) $(LIBCURL_CPPFLAGS)
++pkglib_LTLIBRARIES = select_gnl_cons_tres.la
+ 
+ # Trackable RESources selection plugin.
+-select_cons_tres_la_SOURCES = \
++select_gnl_cons_tres_la_SOURCES = \
+ 	cons_helpers.c cons_helpers.h \
+ 	dist_tasks.c dist_tasks.h \
++	globres.c globres.h \
+ 	gres_sock_list.c gres_sock_list.h \
+ 	gres_select_filter.c gres_select_filter.h \
+ 	gres_select_util.c gres_select_util.h \
+@@ -539,7 +542,8 @@ select_cons_tres_la_SOURCES = \
+ 	part_data.c part_data.h \
+ 	select_cons_tres.c select_cons_tres.h
+ 
+-select_cons_tres_la_LDFLAGS = $(PLUGIN_FLAGS)
++select_gnl_cons_tres_la_LDFLAGS = $(PLUGIN_FLAGS)
++select_gnl_cons_tres_la_LIBADD = $(LIBCURL)
+ all: all-am
+ 
+ .SUFFIXES:
+@@ -607,8 +611,8 @@ clean-pkglibLTLIBRARIES:
+ 	echo rm -f $${locs}; \
+ 	$(am__rm_f) $${locs}
+ 
+-select_cons_tres.la: $(select_cons_tres_la_OBJECTS) $(select_cons_tres_la_DEPENDENCIES) $(EXTRA_select_cons_tres_la_DEPENDENCIES) 
+-	$(AM_V_CCLD)$(select_cons_tres_la_LINK) -rpath $(pkglibdir) $(select_cons_tres_la_OBJECTS) $(select_cons_tres_la_LIBADD) $(LIBS)
++select_gnl_cons_tres.la: $(select_gnl_cons_tres_la_OBJECTS) $(select_gnl_cons_tres_la_DEPENDENCIES) $(EXTRA_select_gnl_cons_tres_la_DEPENDENCIES)
++	$(AM_V_CCLD)$(select_gnl_cons_tres_la_LINK) -rpath $(pkglibdir) $(select_gnl_cons_tres_la_OBJECTS) $(select_gnl_cons_tres_la_LIBADD) $(LIBS)
+ 
+ mostlyclean-compile:
+ 	-rm -f *.$(OBJEXT)
+@@ -618,6 +622,7 @@ distclean-compile:
+ 
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/cons_helpers.Plo@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/dist_tasks.Plo@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/globres.Plo@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/gres_select_filter.Plo@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/gres_select_util.Plo@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/gres_sock_list.Plo@am__quote@ # am--include-marker
+@@ -756,6 +761,7 @@ clean-am: clean-generic clean-libtool clean-pkglibLTLIBRARIES \
+ distclean: distclean-am
+ 	-rm -f ./$(DEPDIR)/cons_helpers.Plo
+ 	-rm -f ./$(DEPDIR)/dist_tasks.Plo
++	-rm -f ./$(DEPDIR)/globres.Plo
+ 	-rm -f ./$(DEPDIR)/gres_select_filter.Plo
+ 	-rm -f ./$(DEPDIR)/gres_select_util.Plo
+ 	-rm -f ./$(DEPDIR)/gres_sock_list.Plo
+@@ -811,6 +817,7 @@ installcheck-am:
+ maintainer-clean: maintainer-clean-am
+ 	-rm -f ./$(DEPDIR)/cons_helpers.Plo
+ 	-rm -f ./$(DEPDIR)/dist_tasks.Plo
++	-rm -f ./$(DEPDIR)/globres.Plo
+ 	-rm -f ./$(DEPDIR)/gres_select_filter.Plo
+ 	-rm -f ./$(DEPDIR)/gres_select_util.Plo
+ 	-rm -f ./$(DEPDIR)/gres_sock_list.Plo
+diff --git a/src/plugins/select/cons_tres/globres.c b/src/plugins/select/cons_tres/globres.c
+new file mode 100644
+index 0000000000..02ba2ec42a
+--- /dev/null
++++ b/src/plugins/select/cons_tres/globres.c
+@@ -0,0 +1,977 @@
++/*****************************************************************************\
++ *  globres.c - checks whether a job can be allocated a global
++ *  resource, such as power, by communicating with an external server that
++ *  monitors this resource.
++ *****************************************************************************
++ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ * http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++\*****************************************************************************/
++
++#include <string.h>
++#include <curl/curl.h>
++#include "select_cons_tres.h"
++#include "globres.h"
++
++/* Read from configuration file */
++char *globres_service_addr = NULL;
++char *cert_key = NULL;
++char *cert_pem = NULL;
++char *cacert_pem = NULL;
++
++typedef struct {
++	char *memory;
++	size_t size;
++} response_memory_t;
++
++/*
++ * _write_callback - callback function for curl requests.
++ */
++size_t _write_callback(char *contents,
++	size_t size,
++	size_t nmemb,
++	void *userdata)
++{
++	size_t real_size = size * nmemb;
++	response_memory_t *mem = (response_memory_t *)userdata;
++
++	char *ptr = xrealloc(mem->memory, mem->size + real_size + 1);
++	if(ptr == NULL) {
++		error("Not enough memory");
++		return 0;
++	}
++
++	mem->memory = ptr;
++	memcpy(&(mem->memory[mem->size]), contents, real_size);
++	mem->size += real_size;
++	mem->memory[mem->size] = 0;
++
++	return real_size;
++}
++
++/*
++ * _jobid_list_to_str - convert a list of job IDs to a comma-separated string.
++ * jobids	IN - list of job ids
++ */
++char* _jobid_list_to_str(list_t *jobids) {
++	size_t total_len = 0;
++	uint32_t *p_job_id;
++	char *result = NULL, *ptr = NULL;
++	list_itr_t *iterator = NULL;
++	int i = 0;
++
++	if (!jobids || slurm_list_count(jobids) == 0) {
++		result = xmalloc(1);
++		*result = '\0';
++		return result;
++	}
++
++	iterator = list_iterator_create(jobids);
++
++	while ((p_job_id = list_next(iterator))) {
++		total_len += snprintf(NULL, 0, "%u", *p_job_id) + 1;  /* +1 for the comma */
++	}
++	total_len++;  /* For the null terminator */
++
++	result = xmalloc(total_len);
++	if (!result) {
++		error("Failed to allocate memory for jobids string");
++		list_iterator_destroy(iterator);
++		return NULL;
++	}
++
++	list_iterator_reset(iterator);
++
++	/* Build the comma-separated string */
++	ptr = result;
++	while ((p_job_id = list_next(iterator))) {
++		if (i > 0) {
++			*ptr++ = ',';  /* Add comma separator */
++		}
++		ptr += sprintf(ptr, "%u", *p_job_id);
++		i++;
++	}
++	*ptr = '\0';  /* Null-terminate the string */
++
++	list_iterator_destroy(iterator);
++	return result;
++}
++
++/*
++ * Callback for libcurl tracing - print out datatype and data
++ */
++static int _libcurl_trace(CURL *handle, curl_infotype type, char *data,
++			  size_t size, void *userp)
++{
++	switch (type) {
++        case CURLINFO_TEXT:
++            log_flag(SELECT_TYPE, "libcurl: %.*s", (int)size, data);
++            break;
++        case CURLINFO_HEADER_IN:
++            log_flag(SELECT_TYPE, "libcurl [HEADER IN]: %.*s", (int)size, data);
++            break;
++        case CURLINFO_HEADER_OUT:
++            log_flag(SELECT_TYPE, "libcurl [HEADER OUT]: %.*s", (int)size, data);
++            break;
++        case CURLINFO_DATA_IN:
++            log_flag(SELECT_TYPE, "libcurl [DATA IN]: Received %zu bytes", size);
++            break;
++        case CURLINFO_DATA_OUT:
++            log_flag(SELECT_TYPE, "libcurl [DATA OUT]: Sent %zu bytes", size);
++            break;
++        default:
++            log_flag(SELECT_TYPE, "libcurl: Other info type %d", type);
++            break;
++	}
++	return 0;
++}
++
++/*
++ * _set_curl_opts - set options to libcurl for the specific query.
++ * url				IN - base url
++ * curl				IN - query data structure
++ * response_memory	IN/OUT - contains the returned body
++ */
++int _set_curl_opts(char* url,
++	CURL *curl,
++	response_memory_t *response_memory)
++{
++	CURLcode res;
++
++	/* Enable verbose output.
++	 * Set DebugFlags=SelectType in slurm.conf to see these logs.
++	 */
++	res = curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, _libcurl_trace);
++	if (res != CURLE_OK) {
++		error("Error setting DEBUGFUNCTION: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++	res = curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
++	if (res != CURLE_OK) {
++		error("Error setting VERBOSE mode: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++
++	/* Set the CA certificate to verify the server's certificate */
++	if (cacert_pem != NULL) {
++		res = curl_easy_setopt(curl, CURLOPT_CAINFO, cacert_pem);
++		if (res != CURLE_OK) {
++			error("Error setting CAINFO: %s", curl_easy_strerror(res));
++			return SLURM_ERROR;
++		}
++	}
++
++	/* Set the client certificate and private key for client authentication */
++	if ((cert_key != NULL) && (cert_pem != NULL)) {
++		res = curl_easy_setopt(curl, CURLOPT_SSLCERT, cert_pem);
++		if (res != CURLE_OK) {
++			error("Error setting SSLCERT: %s", curl_easy_strerror(res));
++			return SLURM_ERROR;
++		}
++		res = curl_easy_setopt(curl, CURLOPT_SSLKEY, cert_key);
++		if (res != CURLE_OK) {
++			error("Error setting SSLKEY: %s", curl_easy_strerror(res));
++			return SLURM_ERROR;
++		}
++	}
++
++	res = curl_easy_setopt(curl, CURLOPT_URL, url);
++	if (res != CURLE_OK) {
++		error("Error setting URL: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++
++	res = curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, _write_callback);
++	if (res != CURLE_OK) {
++		error("Error setting WRITEFUNCTION: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++	res = curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)response_memory);
++	if (res != CURLE_OK) {
++		error("Error setting WRITEDATA: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++
++	return SLURM_SUCCESS;
++}
++
++/*
++ * _send_globres_get - send the globres service a GET query.
++ * url				IN - base url
++ * response_memory	IN/OUT - contains the returned body. Caller must release
++ *   response_memory->memory
++ */
++int _send_globres_get(char* url,
++	response_memory_t *response_memory)
++{
++	CURLcode res;
++	CURL *curl;
++	int ret = SLURM_SUCCESS;
++
++	response_memory->memory = xmalloc(1);
++	response_memory->size = 0;
++	*response_memory->memory = '\0';
++
++	debug("About to send get query: %s", url);
++
++	curl = curl_easy_init();
++	if(!curl) {
++		error("Failed to initialize CURL session");
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	if (_set_curl_opts(url, curl, response_memory) != SLURM_SUCCESS) {
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	res = curl_easy_perform(curl);
++	if(res != CURLE_OK) {
++		error("curl_easy_perform() failed: %s", curl_easy_strerror(res));
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	debug("Response code: %s, response data (%lu bytes): %s",
++		  curl_easy_strerror(res),
++		  (unsigned long)response_memory->size,
++		  response_memory->memory);
++
++cleanup:
++	curl_easy_cleanup(curl);
++	return ret;
++}
++
++/*
++ * _send_globres_post - send the globres service a POST query.
++ * url				IN - base url
++ * json_body		IN - body of the post request
++ * response_memory	IN/OUT - contains the returned body. Caller must release
++ *   response_memory->memory
++ */
++int _send_globres_post(char* url,
++	char* json_body,
++	response_memory_t *response_memory)
++{
++	CURLcode res;
++	CURL *curl;
++	struct curl_slist *headers = NULL;
++	int ret = SLURM_SUCCESS;
++
++	response_memory->memory = xmalloc(1);
++	response_memory->size = 0;
++	*response_memory->memory = '\0';
++
++	debug("About to send post query: %s", url);
++
++	curl = curl_easy_init();
++	if(!curl) {
++		error("Failed to initialize CURL session");
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	if (_set_curl_opts(url, curl, response_memory) != SLURM_SUCCESS) {
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	headers = curl_slist_append(headers, "Content-Type: application/json");
++	res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
++	if (res != CURLE_OK) {
++		error("Error setting HTTPHEADER: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++	res = curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body);
++	if (res != CURLE_OK) {
++		error("Error setting POSTFIELDS: %s", curl_easy_strerror(res));
++		return SLURM_ERROR;
++	}
++
++	res = curl_easy_perform(curl);
++	if(res != CURLE_OK) {
++		error("curl_easy_perform() failed: %s", curl_easy_strerror(res));
++		ret = SLURM_ERROR;
++		goto cleanup;
++	}
++
++	debug("Response code: %s, response data (%lu bytes): %s",
++		  curl_easy_strerror(res),
++		  (unsigned long)response_memory->size,
++		  response_memory->memory);
++
++cleanup:
++	curl_easy_cleanup(curl);
++	if (headers != NULL) {
++		curl_slist_free_all(headers);
++	}
++	return ret;
++}
++
++/*
++ * _globres_job_request_gpu - check if this job requested gpus or not.
++ * job_ptr		IN - the job data structure
++ * RET true if this job requested gpus and false otherwise
++ */
++bool _globres_job_request_gpu(job_record_t *job_ptr)
++{
++	list_itr_t *job_gres_iter;
++	gres_state_t *gres_state_job;
++	bool request_gpu = false;
++	list_t *job_gres_list = job_ptr->gres_list_req_accum;
++
++	if (!globres_enabled)
++		return false;
++
++	if (!job_gres_list || (list_count(job_gres_list) == 0))
++		return false;
++
++	job_gres_iter = list_iterator_create(job_gres_list);
++	while ((gres_state_job = (gres_state_t *) list_next(job_gres_iter))) {
++		if (xstrcasecmp(gres_state_job->gres_name, "gpu") != 0) continue;
++		request_gpu = true;
++		break;
++	}
++	list_iterator_destroy(job_gres_iter);
++	return request_gpu;
++}
++
++/*
++ * _globres_job_hero - check if this job is a hero job or not.
++ * job_ptr		IN - the job data structure
++ * RET true if this job is a hero job and false otherwise
++ */
++bool _globres_job_hero(job_record_t *job_ptr)
++{
++	bool globres_hero_job;
++
++	if (!globres_enabled)
++		return false;
++
++	globres_hero_job = job_ptr->qos_ptr &&
++		(strstr(job_ptr->qos_ptr->name, "globres_hero") != NULL);
++	return globres_hero_job;
++}
++
++/*
++ * globres_get_jobids - return a list of job ids from a list of job pointers.
++ * jobs		IN - list of job pointers
++ * jobids	IN/OUT - will contain only the job ids of the given jobs
++ */
++extern void globres_get_jobids(list_t *jobs,
++	list_t *jobids)
++{
++	job_record_t *tmp_job_ptr;
++	list_itr_t *job_iterator = NULL;
++
++	if (!globres_enabled)
++		return;
++
++	if (!jobs || (slurm_list_count(jobs) == 0)) {
++		return;
++	}
++
++	job_iterator = list_iterator_create(jobs);
++
++	while ((tmp_job_ptr = list_next(job_iterator))) {
++		list_append(jobids, &tmp_job_ptr->job_id);
++	}
++
++	list_iterator_destroy(job_iterator);
++}
++
++/*
++ * globres_calc_job_num_gpus - determine the requested number of GPUs for this
++ *   job.
++ * job_ptr		IN - the job data structure
++ * RET count of required GPUs for the job
++ */
++extern int globres_calc_job_num_gpus(job_record_t *job_ptr)
++{
++	list_itr_t *job_gres_iter;
++	gres_state_t *gres_state_job;
++	gres_job_state_t *gres_js;
++	uint32_t total_num_gpus = 0;
++	uint32_t sockets_per_node = job_ptr->details->mc_ptr->sockets_per_node;
++	uint32_t ntasks_per_node = MAX(job_ptr->details->ntasks_per_node, 1);
++	uint32_t node_count = job_ptr->details->min_nodes;
++	uint32_t task_count = ntasks_per_node * node_count;
++	list_t *job_gres_list = job_ptr->gres_list_req_accum;
++
++	if (!globres_enabled)
++		return 0;
++
++	if (!job_gres_list || (list_count(job_gres_list) == 0))
++		return 0;
++
++	job_gres_iter = list_iterator_create(job_gres_list);
++	while ((gres_state_job = (gres_state_t *) list_next(job_gres_iter))) {
++		uint32_t num_gpus = 0;
++
++		if (xstrcasecmp(gres_state_job->gres_name, "gpu") != 0) continue;
++
++		gres_js = (gres_job_state_t *) gres_state_job->gres_data;
++		if (gres_js->gres_per_job) {
++			num_gpus = gres_js->gres_per_job;
++		} else if (gres_js->gres_per_node) {
++			num_gpus = gres_js->gres_per_node *
++				node_count;
++		} else if (gres_js->gres_per_socket) {
++			num_gpus = gres_js->gres_per_socket *
++				node_count * sockets_per_node;
++		} else if (gres_js->gres_per_task) {
++			num_gpus = gres_js->gres_per_task * task_count;
++		} else
++			continue;
++		total_num_gpus += num_gpus;
++	}
++	list_iterator_destroy(job_gres_iter);
++	return total_num_gpus;
++}
++
++/*
++ * globres_is_job_merge_valid - verifies that the two jobs are both
++ *	 hero or both non hero jobs.
++ * from_job_ptr		IN - the first job data structure
++ * from_job_ptr		IN - the second job data structure
++ * RET the returned values from the globres service
++ */
++extern int globres_is_job_merge_valid(job_record_t *from_job_ptr,
++	job_record_t *to_job_ptr)
++{
++	bool from_job_hero_job = _globres_job_hero(from_job_ptr);
++	bool to_job_hero_job = _globres_job_hero(to_job_ptr);
++	if (from_job_hero_job != to_job_hero_job) {
++		error("Attempt to merge hero with non-hero job");
++		return SLURM_ERROR;
++	}
++	return SLURM_SUCCESS;
++}
++
++/*
++ * globres_test_hero_job_feasible - sends request to the globres service to
++ *	 verify there is enough of the global resource for this hero job.
++ * job_ptr		IN - the job data structure
++ * RET the returned values from the globres service
++ */
++extern int globres_test_hero_job_feasible(job_record_t *job_ptr)
++{
++	int res = SLURM_SUCCESS;
++	char url[256];
++	response_memory_t response_memory;
++	bool hero_job = _globres_job_hero(job_ptr);
++	bool gpu_job = _globres_job_request_gpu(job_ptr);
++	uint32_t job_num_nodes = job_ptr->details->min_nodes;
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	if (!hero_job)
++		return SLURM_SUCCESS;
++
++	snprintf(url,
++			 sizeof(url),
++			 "%s/test_hero_job_feasible?jobid=%u&num_nodes=%u&is_gpu=%d",
++			 globres_service_addr,
++			 job_ptr->job_id,
++			 job_num_nodes,
++			 gpu_job);
++
++	res = _send_globres_get(url, &response_memory);
++	/*
++	 * Return SLURM_ERROR only if the response is "no".
++	 * In all other cases, such as communication errors, return SLURM_SUCCESS instead.
++	 * This is because returning SLURM_ERROR after SLURM_SUCCESS causes Slurm to mark
++	 * the job with "BadConstraints" and stop retrying.
++	 * Returning SLURM_SUCCESS, however, allows Slurm to keep attempting to schedule the job.
++	 */
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++		res = SLURM_SUCCESS;
++	} else if (xstrcmp(response_memory.memory, "{\"message\":\"no\"}") == 0) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource insufficient");
++		res = SLURM_ERROR;
++	}
++	xfree(response_memory.memory);
++	return res;
++}
++
++/*
++ * globres_test_job_global_resource_available - prepare preempted_jobids and ask
++ *   the globres service if there is enough of the resource considering the
++ *   preempted jobs.
++ * job_ptr				IN - the job data stucture
++ * terminated_jobids	IN - list of job ids that the globres service should
++ *   consider as finished when evaluating resource availability for the new job.
++ * node_bitmap			IN - current node allocation for the job
++ */
++extern int globres_test_job_global_resource_available(job_record_t *job_ptr,
++	list_t *terminated_jobids,
++	bitstr_t *node_bitmap)
++{
++	int res = SLURM_SUCCESS;
++	char *url = NULL;
++	char *preempt_jobids_str = NULL, *job_nodes_str = NULL;
++	size_t url_len = 0;
++	char job_id_str[12];
++	response_memory_t response_memory;
++	bool hero_job = _globres_job_hero(job_ptr);
++	bool gpu_job = _globres_job_request_gpu(job_ptr);
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	snprintf(job_id_str, sizeof(job_id_str), "%u", job_ptr->job_id);
++
++	preempt_jobids_str = _jobid_list_to_str(terminated_jobids);
++	if (!preempt_jobids_str) {
++		return SLURM_ERROR;
++	}
++	debug("preempt_jobids_str %s", preempt_jobids_str);
++
++	job_nodes_str = bitmap2node_name(node_bitmap);
++	url_len = strlen(globres_service_addr) +
++			  strlen("/test_job_global_resource_available?jobid=") +
++			  strlen(job_id_str) +
++			  strlen("&job_nodes=") +
++			  strlen(job_nodes_str) +
++			  strlen("&preempted_jobids=") +
++			  strlen(preempt_jobids_str) +
++			  strlen("&is_hero=1") +
++			  strlen("&is_gpu=1") +
++			  1; /* Add 1 for null terminator */
++
++	url = xmalloc(url_len);
++	if (!url) {
++		error("Failed to allocate memory for URL");
++		xfree(preempt_jobids_str);
++		xfree(job_nodes_str);
++		return SLURM_ERROR;
++	}
++
++	snprintf(url,
++			 url_len,
++			 "%s/test_job_global_resource_available?jobid=%s&job_nodes=%s&preempted_jobids=%s&is_hero=%d&is_gpu=%d",
++			 globres_service_addr,
++			 job_id_str,
++			 job_nodes_str,
++			 preempt_jobids_str,
++			 hero_job,
++			 gpu_job);
++	xfree(preempt_jobids_str);
++	xfree(job_nodes_str);
++
++	res = _send_globres_get(url, &response_memory);
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++	} else if (xstrcmp(response_memory.memory, "{\"message\":\"yes\"}") != 0) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource insufficient");
++		res = SLURM_ERROR;
++	}
++	xfree(response_memory.memory);
++	xfree(url);
++	return res;
++}
++
++/*
++ * globres_job_begin - notify the globres service about job begin event.
++ * job_ptr		IN - the job data structure
++ */
++extern int globres_job_begin(job_record_t *job_ptr)
++{
++	int res = SLURM_SUCCESS;
++	char *preempt_bitmap_str = NULL, *job_nodes_str = NULL, *json_body = NULL;
++	size_t json_body_len = 0;
++	char job_id_str[12], url[256];
++	response_memory_t response_memory;
++	bool hero_job = _globres_job_hero(job_ptr);
++	bool gpu_job = _globres_job_request_gpu(job_ptr);
++	bitstr_t *node_bitmap = job_ptr->node_bitmap;
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	job_nodes_str = bitmap2node_name(node_bitmap);
++
++	snprintf(job_id_str, sizeof(job_id_str), "%u", job_ptr->job_id);
++
++	json_body_len = strlen("{\"job_id\":") +
++					strlen(job_id_str) +
++					strlen(",\"job_nodes\":\"") +
++					strlen(job_nodes_str) +
++					strlen("\",\"is_hero\":1}") +
++					strlen("\",\"is_gpu\":1}") +
++					1; /* Add 1 for null terminator */
++
++	json_body = xmalloc(json_body_len);
++	if (!json_body) {
++		error("Failed to allocate memory for json body");
++		xfree(job_nodes_str);
++		xfree(preempt_bitmap_str);
++		return SLURM_ERROR;
++	}
++
++	snprintf(url, sizeof(url), "%s/job_begin", globres_service_addr);
++	snprintf(json_body,
++			 json_body_len,
++			 "{\"jobid\":%s,\"job_nodes\":\"%s\",\"is_hero\":%d,\"is_gpu\":%d}",
++			 job_id_str,
++			 job_nodes_str,
++			 hero_job,
++			 gpu_job);
++	xfree(job_nodes_str);
++
++	res = _send_globres_post(url, json_body, &response_memory);
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++	}
++	xfree(response_memory.memory);
++	xfree(json_body);
++	return res;
++}
++
++/*
++ * globres_job_update - notify the globres service about job update event.
++ * job_id		IN - the job data structure
++ * hero_job		IN - indicates if the job is a hero job or not
++ */
++extern int globres_job_update(job_record_t *job_ptr)
++{
++	int res = SLURM_SUCCESS;
++	char *preempt_bitmap_str = NULL, *job_nodes_str = NULL, *json_body = NULL;
++	size_t json_body_len = 0;
++	char job_id_str[12], url[256];
++	response_memory_t response_memory;
++	bool hero_job = _globres_job_hero(job_ptr);
++	bool gpu_job = _globres_job_request_gpu(job_ptr);
++	bitstr_t *node_bitmap = job_ptr->node_bitmap;
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	job_nodes_str = bitmap2node_name(node_bitmap);
++
++	snprintf(job_id_str, sizeof(job_id_str), "%u", job_ptr->job_id);
++
++	json_body_len = strlen("{\"job_id\":") +
++					strlen(job_id_str) +
++					strlen(",\"job_nodes\":\"") +
++					strlen(job_nodes_str) +
++					strlen("\",\"is_hero\":1}") +
++					strlen("\",\"is_gpu\":1}") +
++					1; /* Add 1 for null terminator */
++
++	json_body = xmalloc(json_body_len);
++	if (!json_body) {
++		error("Failed to allocate memory for json body");
++		xfree(job_nodes_str);
++		xfree(preempt_bitmap_str);
++		return SLURM_ERROR;
++	}
++
++	snprintf(url, sizeof(url), "%s/job_update", globres_service_addr);
++	snprintf(json_body,
++			 json_body_len,
++			 "{\"jobid\":%s,\"job_nodes\":\"%s\",\"is_hero\":%d,\"is_gpu\":%d}",
++			 job_id_str,
++			 job_nodes_str,
++			 hero_job,
++			 gpu_job);
++	xfree(job_nodes_str);
++
++	res = _send_globres_post(url, json_body, &response_memory);
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++	}
++	xfree(response_memory.memory);
++	xfree(json_body);
++	return res;
++}
++
++/*
++ * globres_job_finish - notify the globres service about job finish event.
++ * job_ptr		IN - the job data structure
++ */
++extern int globres_job_finish(job_record_t *job_ptr)
++{
++	int res = SLURM_SUCCESS;
++	char url[256], json_body[256];
++	response_memory_t response_memory;
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	snprintf(url, sizeof(url), "%s/job_finish", globres_service_addr);
++	snprintf(json_body, sizeof(json_body), "{\"jobid\":%u}", job_ptr->job_id);
++
++	res = _send_globres_post(url, json_body, &response_memory);
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++	}
++	xfree(response_memory.memory);
++	return res;
++}
++
++/*
++ * globres_update_preemptee_list - get all job ids of jobs in
++ *   preemptee_candidates that are not included in preemptee_job_list.
++ *   Send this list to the globres service with additional list of
++ *   preemptee_job_list ids.
++ *	 The globres service determines if additional jobs from the former list are
++ *   to be preempted and returns their ids. Update preemptee_job_list with the
++ *   additional jobs returned from the globres service.
++ * job_ptr				IN - the job data structure
++ * node_bitmap			IN - current node allocation for the job
++ * preemptee_job_list	IN/OUT - list of job to preempt. Update this list with
++ *   additional jobs to preempt due to the global resource.
++ * preemptee_candidates	IN - all candidates for preemption. Part of those are
++ *   already in preemptee_job_list.
++ */
++extern int globres_update_preemptee_list(job_record_t *job_ptr,
++	bitstr_t *node_bitmap,
++	list_t *preemptee_job_list,
++	list_t *preemptee_candidates)
++{
++	int res = SLURM_SUCCESS;
++	char *url = NULL, *job_nodes_str = NULL;
++	char *preempt_jobids_str = NULL, *preemptee_candidates_jobids_str = NULL;
++	size_t url_len = 0;
++	char job_id_str[12];
++	list_t *preemptee_jobids = NULL, *preemptee_candidates_jobids = NULL;
++	list_t *additional_preemptee_jobids = NULL;
++	list_itr_t *iterator = NULL;
++	response_memory_t response_memory;
++	job_record_t *tmp_job_ptr;
++	bool hero_job = _globres_job_hero(job_ptr);
++	bool gpu_job = _globres_job_request_gpu(job_ptr);
++
++	if (!globres_enabled)
++		return SLURM_SUCCESS;
++
++	preemptee_jobids = list_create(NULL);
++	preemptee_candidates_jobids = list_create(NULL);
++
++	snprintf(job_id_str, sizeof(job_id_str), "%u", job_ptr->job_id);
++
++	globres_get_jobids(preemptee_job_list, preemptee_jobids);
++	preempt_jobids_str = _jobid_list_to_str(preemptee_jobids);
++	if (!preempt_jobids_str) {
++		FREE_NULL_LIST(preemptee_jobids);
++		return SLURM_ERROR;
++	}
++	debug("preempt_jobids_str %s", preempt_jobids_str);
++	FREE_NULL_LIST(preemptee_jobids);
++
++	globres_get_jobids(preemptee_candidates, preemptee_candidates_jobids);
++	preemptee_candidates_jobids_str = _jobid_list_to_str(preemptee_candidates_jobids);
++	if (!preemptee_candidates_jobids_str) {
++		xfree(preempt_jobids_str);
++		FREE_NULL_LIST(preemptee_candidates_jobids);
++		return SLURM_ERROR;
++	}
++	debug("preemptee_candidates_jobids_str %s", preemptee_candidates_jobids_str);
++	FREE_NULL_LIST(preemptee_candidates_jobids);
++
++	job_nodes_str = bitmap2node_name(node_bitmap);
++	url_len = strlen(globres_service_addr) +
++			  strlen("/update_preemptee_list?jobid=") +
++			  strlen(job_id_str) +
++			  strlen("&job_nodes=") +
++			  strlen(job_nodes_str) +
++			  strlen("&is_hero=1") +
++			  strlen("&is_gpu=1") +
++			  strlen("&preempted_jobids=") +
++			  strlen(preempt_jobids_str) +
++			  strlen("&preemptee_candidates_jobids=") +
++			  strlen(preemptee_candidates_jobids_str) +
++			  1; /* Add 1 for null terminator */
++
++	url = xmalloc(url_len);
++	if (!url) {
++		error("Failed to allocate memory for URL");
++		xfree(preempt_jobids_str);
++		xfree(preemptee_candidates_jobids_str);
++		xfree(job_nodes_str);
++		return SLURM_ERROR;
++	}
++
++	snprintf(url,
++			 url_len,
++			 "%s/update_preemptee_list?jobid=%s&job_nodes=%s&is_hero=%d&is_gpu=%d&preempted_jobids=%s&preemptee_candidates_jobids=%s",
++			 globres_service_addr,
++			 job_id_str,
++			 job_nodes_str,
++			 hero_job,
++			 gpu_job,
++			 preempt_jobids_str,
++			 preemptee_candidates_jobids_str);
++	xfree(preempt_jobids_str);
++	xfree(preemptee_candidates_jobids_str);
++	xfree(job_nodes_str);
++
++	res = _send_globres_get(url, &response_memory);
++	if (res != SLURM_SUCCESS) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource server unavailable");
++	} else if (xstrcmp(response_memory.memory, "{\"message\":\"no\"}") == 0) {
++		job_ptr->state_reason = WAIT_RESOURCES;
++		xfree(job_ptr->state_desc);
++		job_ptr->state_desc = xstrdup("Global resource insufficient");
++		res = SLURM_ERROR;
++	} else {
++		additional_preemptee_jobids = list_create(NULL);
++		iterator = list_iterator_create(preemptee_candidates);
++		/* Read the response_body, extract the job ids, iterate the
++		   preemptee_candidates and append the ones with matching job ids to
++		   preemptee_job_list */
++
++		if (strcmp(response_memory.memory, "\"\"") != 0) {
++			/* Remove the surrounding quotes */
++			size_t len = strlen(response_memory.memory);
++			if (len > 2 && response_memory.memory[0] == '"' &&
++				response_memory.memory[len - 1] == '"') {
++				/* Copy without quotes */
++				char *temp = strndup(response_memory.memory + 1, len - 2);
++
++				/* Tokenize the string using commas */
++				char *token = strtok(temp, ",");
++				while (token != NULL) {
++					uint32_t jobid = (uint32_t)strtoul(token, NULL, 10);;
++					while ((tmp_job_ptr = list_next(iterator))) {
++						if (tmp_job_ptr->job_id == jobid) {
++							list_append(preemptee_job_list, tmp_job_ptr);
++						}
++					}
++					token = strtok(NULL, ",");
++				}
++
++				free(temp);
++			}
++		}
++
++		list_iterator_destroy(iterator);
++		FREE_NULL_LIST(additional_preemptee_jobids);
++	}
++	xfree(response_memory.memory);
++	xfree(url);
++
++	return res;
++}
++
++/*
++ * globres_init - initialization of the globres feature.
++ * Returns SLURM_SUCCESS if globres feature is enabled, otherwise SLURM_ERROR.
++ */
++extern int globres_init(void)
++{
++	int res = SLURM_SUCCESS;
++	int fd;
++	s_p_hashtbl_t *globres_hashtbl = NULL;
++	char *globres_conf;
++	static s_p_options_t globres_options[] = {
++		{"GlobresServiceAddr", S_P_STRING},
++		{"CertKey", S_P_STRING},
++		{"CertPem", S_P_STRING},
++		{"CacertPem", S_P_STRING},
++		{NULL}
++	};
++
++	globres_conf = get_extra_conf_path("globres.conf");
++	fd = open(globres_conf, 0);
++	if (fd >= 0) {
++		close(fd);
++	} else {
++		verbose("Unable to find configuration file %s. Globres feature is disabled",
++				globres_conf);
++		return SLURM_ERROR;
++	}
++
++	globres_hashtbl = s_p_hashtbl_create(globres_options);
++	if (s_p_parse_file(globres_hashtbl, NULL, globres_conf, 0, NULL) == SLURM_ERROR) {
++		verbose("Could not parse %s. Globres feature is disabled", globres_conf);
++		s_p_hashtbl_destroy(globres_hashtbl);
++		return SLURM_ERROR;
++	}
++
++	if (s_p_get_string(&globres_service_addr, "GlobresServiceAddr", globres_hashtbl)) {
++		verbose("Globres service address (GlobresServiceAddr): %s",
++			globres_service_addr);
++	} else {
++		verbose("Could not find GlobresServiceAddr in %s. Globres feature is disabled",
++				globres_conf);
++		res = SLURM_ERROR;
++	}
++
++	if (s_p_get_string(&cert_key, "CertKey", globres_hashtbl)) {
++		verbose("Cert key (CertKey): %s", cert_key);
++	} else {
++		verbose("Could not find CertKey in %s. Client verification in mTLS is disabled.",
++				globres_conf);
++	}
++	if (s_p_get_string(&cacert_pem, "CacertPem", globres_hashtbl)) {
++		verbose("Cacert pem (CacertPem): %s", cacert_pem);
++	} else {
++		verbose("Could not find CacertPem in %s. Client verification in mTLS is disabled.",
++				globres_conf);
++	}
++
++	if (s_p_get_string(&cert_pem, "CertPem", globres_hashtbl)) {
++		verbose("Cert pem (CertPem): %s", cert_pem);
++	} else {
++		verbose("Could not find CertPem in %s. TLS is disabled",
++				globres_conf);
++	}
++
++	if (curl_global_init(CURL_GLOBAL_ALL) != CURLE_OK) {
++		error("curl_easy_perform() failed: %s",
++			curl_easy_strerror(res));
++		res = SLURM_ERROR;
++	}
++
++	s_p_hashtbl_destroy(globres_hashtbl);
++	xfree(globres_conf);
++
++	return res;
++}
++
++/*
++ * globres_fini - called when the plugin is unloaded. Free all memory.
++ */
++extern int globres_fini(void)
++{
++	xfree(globres_service_addr);
++	xfree(cert_key);
++	xfree(cert_pem);
++	xfree(cacert_pem);
++
++	curl_global_cleanup();
++
++	return SLURM_SUCCESS;
++}
+diff --git a/src/plugins/select/cons_tres/globres.h b/src/plugins/select/cons_tres/globres.h
+new file mode 100644
+index 0000000000..d44bb718a8
+--- /dev/null
++++ b/src/plugins/select/cons_tres/globres.h
+@@ -0,0 +1,56 @@
++/*****************************************************************************\
++ *  globres.h - checks whether a job can be allocated a global
++ *  resource, such as power, by communicating with an external server that
++ *  monitors this resource.
++ *****************************************************************************
++ * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ * http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++\*****************************************************************************/
++
++#ifndef _CONS_TRES_GLOBRES_H
++#define _CONS_TRES_GLOBRES_H
++
++#include "select_cons_tres.h"
++
++extern void globres_get_jobids(list_t *jobs,
++	list_t *jobids);
++
++extern int globres_calc_job_num_gpus(job_record_t *job_ptr);
++
++extern int globres_is_job_merge_valid(job_record_t *from_job_ptr,
++	job_record_t *to_job_ptr);
++
++extern int globres_test_hero_job_feasible(job_record_t *job_ptr);
++
++extern int globres_test_job_global_resource_available(job_record_t *job_ptr,
++	list_t *terminated_jobids,
++	bitstr_t *node_bitmap);
++
++extern int globres_job_begin(job_record_t *job_ptr);
++
++extern int globres_job_update(job_record_t *job_ptr);
++
++extern int globres_job_finish(job_record_t *job_ptr);
++
++extern int globres_update_preemptee_list(job_record_t *job_ptr,
++	bitstr_t *node_bitmap,
++	list_t *preemptee_job_list,
++	list_t *preemptee_candidates);
++
++extern int globres_init(void);
++
++extern int globres_fini(void);
++
++#endif /* !_CONS_TRES_GLOBRES_H */
+\ No newline at end of file
+diff --git a/src/plugins/select/cons_tres/job_test.c b/src/plugins/select/cons_tres/job_test.c
+index acebf5c4b8..71814f0ea9 100644
+--- a/src/plugins/select/cons_tres/job_test.c
++++ b/src/plugins/select/cons_tres/job_test.c
+@@ -2,6 +2,7 @@
+  *  job_test.c - Determine if job can be allocated resources.
+  *****************************************************************************
+  *  Copyright (C) SchedMD LLC.
++ *  Copyright (C) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  *  Derived in large part from select/cons_res plugin
+  *
+  *  This file is part of Slurm, a resource management program.
+@@ -41,6 +42,7 @@
+ #include "gres_select_filter.h"
+ #include "gres_select_util.h"
+ #include "gres_sock_list.h"
++#include "globres.h"
+ 
+ #include "src/slurmctld/licenses.h"
+ #include "src/common/slurm_time.h"
+@@ -1207,7 +1209,7 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 		     node_use_record_t *node_usage, list_t *license_list,
+ 		     resv_exc_t *resv_exc_ptr, bool prefer_alloc_nodes,
+ 		     bool use_extra_row, bool preempt_mode,
+-		     list_t *qos_preemptees)
++		     list_t *qos_preemptees, list_t *candidates_to_finish_jobids)
+ {
+ 	int error_code = SLURM_SUCCESS, select_rc = SLURM_SUCCESS;
+ 	bitstr_t *orig_node_map, **part_core_map = NULL;
+@@ -1327,6 +1329,20 @@ static int _job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 	log_flag(SELECT_TYPE, "evaluating %pJ on %u nodes",
+ 	         job_ptr, bit_set_count(node_bitmap));
+ 
++	/*
++	 * In case of a globres_hero job, call the globres service with the number
++	 * of nodes allocated to this job and whether this job required GPUs.
++	 * The globres service checks if the job ever run. In case of success,
++	 * we later need to verify if the job can run now, based on the current
++	 * global resource usage and speculative preemptions.
++	 */
++	if (mode == SELECT_MODE_TEST_ONLY) {
++		error_code = globres_test_hero_job_feasible(job_ptr);
++		if (error_code != SLURM_SUCCESS) {
++			return error_code;
++		}
++	}
++
+ 	orig_node_map = bit_copy(node_bitmap);
+ 	avail_cores = cons_helpers_mark_avail_cores(node_bitmap, job_ptr);
+ 
+@@ -1860,6 +1876,15 @@ alloc_job:
+ 					  job_ptr->details->min_nodes);
+ 	}
+ 
++	if (error_code == SLURM_SUCCESS) {
++		/*
++		 * Query the globres service if there is enough of the global resource
++		 * available, considering preempted jobs.
++		 */
++		error_code = globres_test_job_global_resource_available(job_ptr,
++			candidates_to_finish_jobids, node_bitmap);
++	}
++
+ 	/*
+ 	 * Defer checking select mode until we get a correct CPU count. Then
+ 	 * exit if select mode is not SELECT_MODE_RUN_NOW, making sure to free
+@@ -2231,7 +2256,7 @@ static uint16_t _setup_cr_type(job_record_t *job_ptr)
+ /* Determine if a job can ever run */
+ static int _test_only(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 		      uint32_t min_nodes, uint32_t max_nodes,
+-		      uint32_t req_nodes, uint16_t job_node_req)
++		      uint32_t req_nodes, uint16_t job_node_req, list_t *preemptee_candidates)
+ {
+ 	int rc;
+ 	uint16_t tmp_cr_type = _setup_cr_type(job_ptr);
+@@ -2239,10 +2264,16 @@ static int _test_only(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 
+ 	hres_pre_select(job_ptr, true);
+ 
++	/*
++	 * globres: no candidates_to_finish_jobids in test mode; for a non hero job
++	 * there is always an option to run at some point so we don't query the
++	 * globres service, while for a hero job, the globres service ignores all
++	 * other jobs when verifying it.
++	 */
+ 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
+ 		       SELECT_MODE_TEST_ONLY, tmp_cr_type, job_node_req,
+ 		       select_part_record, select_node_usage, license_list,
+-		       NULL, false, false, false, NULL);
++		       NULL, false, false, false, NULL, NULL);
+ 	FREE_NULL_LIST(license_list);
+ 	return rc;
+ }
+@@ -2299,8 +2330,18 @@ static int _job_res_rm_job(part_res_record_t *part_record_ptr,
+ 		.node_map = node_map
+ 	};
+ 
+-	if (!job_overlap_and_running(node_map, license_list, job_ptr))
+-		return 1;
++	if (globres_enabled) {
++		/*
++		 * When globres is enables we need to also remove jobs without overlap,
++		 * since they consume this global resource. Hence we only check if a
++		 * job runs, and not for overlap.
++		 */
++		if ((!IS_JOB_RUNNING(job_ptr) && !IS_JOB_SUSPENDED(job_ptr)))
++			return 1;
++	} else {
++		if (!job_overlap_and_running(node_map, license_list, job_ptr))
++			return 1;
++	}
+ 
+ 	if (!job_ptr->het_job_list)
+ 		(void)_wrapper_job_res_rm_job(job_ptr, &wargs);
+@@ -2604,6 +2645,7 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 	bool more_jobs = true;
+ 	int topology_idx;
+ 	DEF_TIMERS;
++	list_t *candidates_to_finish_jobids = NULL;
+ 
+ 	if (will_run_ptr && will_run_ptr->start)
+ 		_set_sched_weight(node_bitmap, true);
+@@ -2641,16 +2683,26 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 		.tmp_bitmap_pptr = &efctv_bitmap,
+ 		.topology_idx = &topology_idx,
+ 	};
++	/*
++	 * If globres is enabled, the following removes all preemptable, not just
++	 * those with overlap.
++	 */
+ 	list_for_each(job_list, _build_cr_job_list, &args);
+ 
+-	/* Test with all preemptable jobs gone */
++	candidates_to_finish_jobids = list_create(NULL);
++	globres_get_jobids(preemptee_candidates, candidates_to_finish_jobids);
++
++	/*
++	 * Test with all preemptable jobs gone.
++	 * Hence, for globres, send all preemptee_candidates ids.
++	 */
+ 	if (preemptee_candidates || args.start) {
+ 		bit_or(node_bitmap, orig_map);
+ 		rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes,
+ 			       req_nodes, SELECT_MODE_WILL_RUN, tmp_cr_type,
+ 			       job_node_req, future_part, future_usage,
+ 			       future_license_list, resv_exc_ptr, false,
+-			       qos_preemptor, true, NULL);
++			       qos_preemptor, true, NULL, candidates_to_finish_jobids);
+ 		if (rc == SLURM_SUCCESS) {
+ 			/*
+ 			 * Actual start time will actually be later than "now",
+@@ -2662,6 +2714,22 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 		}
+ 	}
+ 
++	/*
++	 * globres - code clarification: At this point, we've already removed all
++	 * preemptable jobs. Now, we will try removing running jobs to estimate when
++	 * this job can start running.
++	 * The code sorts the running jobs in ascending order according to their
++	 * expected end times. It then takes the first job in the list and denotes
++	 * its end time as end_time. Next, it considers all subsequent jobs that
++	 * have an end time no more than end_time + 2 * time_window and checks if
++	 * the new job can start once these jobs finish. If this is still
++	 * insufficient, it increases the time_window and continues checking with
++	 * the next set of jobs expected to finish.
++	 * This process repeats until it determines that the job can start.
++	 * Finally, it sets job_ptr->start_time to the end time of the last job it
++	 * hypothetically removed.
++	 */
++
+ 	/*
+ 	 * Remove the running jobs from exp_node_cr and try scheduling the
+ 	 * pending job after each one (or a few jobs that end close in time).
+@@ -2693,24 +2761,32 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 				_select_topo_bitmap(tmp_job_ptr, node_bitmap,
+ 						    &efctv_bitmap,
+ 						    &topology_idx);
+-			if (slurm_conf.debug_flags &
+-			    DEBUG_FLAG_SELECT_TYPE) {
+-				overlap = bit_overlap(efctv_bitmap_ptr,
+-						      tmp_job_ptr->
+-						      node_bitmap);
+-				info("%pJ: overlap=%d", tmp_job_ptr,
+-				      overlap);
+-			} else
+-				overlap = bit_overlap_any(
+-						efctv_bitmap_ptr,
+-						tmp_job_ptr->
+-						node_bitmap);
+-			if (overlap == 0 && /* job has no usable nodes */
+-			    (!future_license_list ||
+-			     !license_list_overlap_non_hres( /* ignore hres */
+-				tmp_job_ptr->license_list,
+-				job_ptr->license_list))) {
+-				continue;  /* skip it */
++			if (!globres_enabled) {
++				/*
++				 * If globres is enabled, even if there is no overlap, it is
++				 * possible that the global resource is the constraint.
++				 * Hence, this skipping based on non-overlapping is only
++				 * done when globres is disabled.
++				 */
++				if (slurm_conf.debug_flags &
++					DEBUG_FLAG_SELECT_TYPE) {
++					overlap = bit_overlap(efctv_bitmap_ptr,
++								tmp_job_ptr->
++								node_bitmap);
++					info("%pJ: overlap=%d", tmp_job_ptr,
++						overlap);
++				} else
++					overlap = bit_overlap_any(
++							efctv_bitmap_ptr,
++							tmp_job_ptr->
++							node_bitmap);
++				if (overlap == 0 && /* job has no usable nodes */
++					(!future_license_list ||
++					!license_list_overlap_non_hres( /* ignore hres */
++					tmp_job_ptr->license_list,
++					job_ptr->license_list))) {
++					continue;  /* skip it */
++				}
+ 			}
+ 			if (!end_time) {
+ 				time_t delta = 0;
+@@ -2735,6 +2811,11 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 				future_license_list, tmp_job_ptr, 0,
+ 				efctv_bitmap_ptr);
+ 			list_push(removed_jobs, tmp_job_ptr);
++			/*
++			 * At each iteration, append tmp_job_ptr->job_id to
++			 * candidates_to_finish_jobids since it will be finished
++			 */
++			list_append(candidates_to_finish_jobids, &tmp_job_ptr->job_id);
+ 			next_job_ptr = list_peek_next(job_iterator);
+ 			if (!next_job_ptr) {
+ 				more_jobs = false;
+@@ -2750,13 +2831,14 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 		if (!last_job_ptr)	/* Should never happen */
+ 			break;
+ 
++		/* For globres, send the considered finished job ids */
+ 		rc = _job_test(job_ptr, node_bitmap, min_nodes,
+ 			       max_nodes, req_nodes,
+ 			       SELECT_MODE_WILL_RUN, tmp_cr_type,
+ 			       job_node_req, future_part, future_usage,
+ 			       future_license_list, resv_exc_ptr,
+ 			       backfill_busy_nodes, qos_preemptor,
+-			       true, NULL);
++			       true, NULL, candidates_to_finish_jobids);
+ 		if (rc == SLURM_SUCCESS) {
+ 			job_record_t *last_relevant_job =
+ 				_get_last_relevant_job(job_ptr, node_bitmap,
+@@ -2817,6 +2899,7 @@ cleanup:
+ 	node_data_destroy(future_usage);
+ 	FREE_NULL_LIST(future_license_list);
+ 	FREE_NULL_LIST(removed_jobs);
++	FREE_NULL_LIST(candidates_to_finish_jobids);
+ 
+ 	return rc;
+ }
+@@ -2850,11 +2933,16 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 	_set_sched_weight(node_bitmap, false);
+ 
+ 	license_list = cluster_license_copy();
+-	/* Try to run with currently available nodes */
++	/*
++	 * Try to run with currently available nodes.
++	 * Hence, for globres, we should not provide any
++	 * candidates_to_finish_jobids, since we
++	 * check if the job can run without preemption.
++	 */
+ 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
+ 		       SELECT_MODE_WILL_RUN, tmp_cr_type, job_node_req,
+ 		       select_part_record, select_node_usage, license_list,
+-		       resv_exc_ptr, false, false, false, NULL);
++		       resv_exc_ptr, false, false, false, NULL, NULL);
+ 	FREE_NULL_LIST(license_list);
+ 	if (rc == SLURM_SUCCESS) {
+ 		job_ptr->start_time = now;
+@@ -2912,6 +3000,18 @@ test_future:
+ 				continue;
+ 			list_append(*preemptee_job_list, tmp_job_ptr);
+ 		}
++		/*
++		 * If the jobs in preemptee_job_list do not provide sufficient available
++		 * global resource, the globres service will try adding jobs from
++		 * preemptee_candidates that are not already in preemptee_job_list,
++		 * one by one, until there is enough of the global resource available.
++		 * It then updates preemptee_job_list with these additional jobs.
++		 */
++		rc = globres_update_preemptee_list(job_ptr,
++			node_bitmap,
++			*preemptee_job_list,
++			preemptee_candidates);
++
+ 		list_iterator_destroy(preemptee_iterator);
+ 		FREE_NULL_BITMAP(efctv_bitmap);
+ 	}
+@@ -2939,6 +3039,7 @@ static int _run_now(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 	uint16_t mode = NO_VAL16;
+ 	uint16_t tmp_cr_type = _setup_cr_type(job_ptr);
+ 	bool preempt_mode = false;
++	list_t *candidates_to_finish_jobids = list_create(NULL);
+ 
+ 	hres_pre_select(job_ptr, false);
+ 
+@@ -2946,10 +3047,14 @@ static int _run_now(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ top:	orig_node_map = bit_copy(save_node_map);
+ 
+ 	license_list = cluster_license_copy();
++	/*
++	 * For globres, start with empty candidates_to_finish_jobids, since we try
++	 * first without preemption.
++	 */
+ 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
+ 		       SELECT_MODE_RUN_NOW, tmp_cr_type, job_node_req,
+ 		       select_part_record, select_node_usage, license_list,
+-		       resv_exc_ptr, false, false, false, NULL);
++		       resv_exc_ptr, false, false, false, NULL, NULL);
+ 
+ 	/* Don't try preempting for licenses if not enabled */
+ 	if ((rc == ESLURM_LICENSES_UNAVAILABLE) &&
+@@ -2966,6 +3071,7 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 	    (mode == PREEMPT_MODE_SUSPEND) &&
+ 	    (job_ptr->priority != 0)) {	/* Job can be held by bad allocate */
+ 		list_t *preemptees_to_suspend_by_qos = list_create(NULL);
++		list_flush(candidates_to_finish_jobids);
+ 
+ 		future_part = part_data_dup_res(select_part_record,
+ 						orig_node_map);
+@@ -2998,13 +3104,15 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 					    orig_node_map))
+ 				continue;
+ 			list_append(preemptees_to_suspend_by_qos, tmp_job_ptr);
++			list_append(candidates_to_finish_jobids, &tmp_job_ptr->job_id);
+ 			bit_or(node_bitmap, orig_node_map);
++			/* For globres, send qos candidates_to_finish_jobids at this point */
+ 			rc = _job_test(job_ptr, node_bitmap, min_nodes,
+ 				       max_nodes, req_nodes,
+ 				       SELECT_MODE_WILL_RUN, tmp_cr_type,
+ 				       job_node_req, future_part, future_usage,
+ 				       NULL, resv_exc_ptr, false, false,
+-				       preempt_mode, NULL);
++				       preempt_mode, NULL, candidates_to_finish_jobids);
+ 
+ 			if (rc != SLURM_SUCCESS)
+ 				continue;
+@@ -3021,8 +3129,9 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 				       job_node_req, select_part_record,
+ 				       select_node_usage, NULL, resv_exc_ptr,
+ 				       false, true, preempt_mode,
+-				       preemptees_to_suspend_by_qos);
++				       preemptees_to_suspend_by_qos, candidates_to_finish_jobids);
+ 			FREE_NULL_LIST(preemptees_to_suspend_by_qos);
++			FREE_NULL_LIST(candidates_to_finish_jobids);
+ 
+ 			FREE_NULL_BITMAP(orig_node_map);
+ 			FREE_NULL_BITMAP(save_node_map);
+@@ -3044,6 +3153,7 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 			FREE_NULL_BITMAP(orig_node_map);
+ 			FREE_NULL_BITMAP(save_node_map);
+ 			FREE_NULL_LIST(license_list);
++			FREE_NULL_LIST(candidates_to_finish_jobids);
+ 			return SLURM_ERROR;
+ 		}
+ 		future_usage = node_data_dup_use(select_node_usage,
+@@ -3053,27 +3163,40 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 			FREE_NULL_BITMAP(orig_node_map);
+ 			FREE_NULL_BITMAP(save_node_map);
+ 			FREE_NULL_LIST(license_list);
++			REE_NULL_LIST(candidates_to_finish_jobids);
+ 			return SLURM_ERROR;
+ 		}
+ 
++		/*
++		 * For globres, append tmp_job_ptr->job_id to
++		 * candidates_to_finish_jobids as it is considered removed.
++		 */
++		list_flush(candidates_to_finish_jobids);
++
+ 		job_iterator = list_iterator_create(preemptee_candidates);
+ 		while ((tmp_job_ptr = list_next(job_iterator))) {
+ 			mode = slurm_job_preempt_mode(tmp_job_ptr);
+ 			if ((mode != PREEMPT_MODE_REQUEUE)    &&
+ 			    (mode != PREEMPT_MODE_CANCEL))
+ 				continue;	/* can't remove job */
+-			/* Remove preemptable job now */
++			/*
++			 * Remove preemptable job now.
++			 * If globres is enabled, it removes the preemptable candidate
++			 * regardless of any overlap.
++			 */
+ 			if (_job_res_rm_job(future_part, future_usage,
+ 					    license_list, tmp_job_ptr, 0,
+ 					    orig_node_map))
+ 				continue;
+ 			bit_or(node_bitmap, orig_node_map);
++			list_append(candidates_to_finish_jobids, &tmp_job_ptr->job_id);
++			/* For globres, send updated candidates_to_finish_jobids */
+ 			rc = _job_test(job_ptr, node_bitmap, min_nodes,
+ 				       max_nodes, req_nodes,
+ 				       SELECT_MODE_WILL_RUN, tmp_cr_type,
+ 				       job_node_req, future_part, future_usage,
+ 				       license_list, resv_exc_ptr, false, false,
+-				       preempt_mode, NULL);
++				       preempt_mode, NULL, candidates_to_finish_jobids);
+ 			tmp_job_ptr->details->usable_nodes = 0;
+ 			if (rc != SLURM_SUCCESS)
+ 				continue;
+@@ -3164,6 +3287,18 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 					    tmp_job_ptr);
+ 				remove_some_jobs = true;
+ 			}
++			/*
++			 * If the jobs in preemptee_job_list do not provide sufficient available
++			 * global resource, the globres service will try adding jobs from
++			 * preemptee_candidates that are not already in preemptee_job_list,
++			 * one by one, until there is enough of the global resource available.
++			 * It then updates preemptee_job_list with these additional jobs.
++			 */
++			rc = globres_update_preemptee_list(job_ptr,
++				node_bitmap,
++				*preemptee_job_list,
++				preemptee_candidates);
++
+ 			list_iterator_destroy(preemptee_iterator);
+ 			if (!remove_some_jobs) {
+ 				FREE_NULL_LIST(*preemptee_job_list);
+@@ -3176,6 +3311,7 @@ top:	orig_node_map = bit_copy(save_node_map);
+ 	FREE_NULL_LIST(license_list);
+ 	FREE_NULL_BITMAP(orig_node_map);
+ 	FREE_NULL_BITMAP(save_node_map);
++	FREE_NULL_LIST(candidates_to_finish_jobids);
+ 
+ 	return rc;
+ }
+@@ -3848,7 +3984,7 @@ extern int job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 				    will_run_ptr);
+ 	} else if (mode == SELECT_MODE_TEST_ONLY) {
+ 		rc = _test_only(job_ptr, node_bitmap, min_nodes,
+-				max_nodes, req_nodes, job_node_req);
++				max_nodes, req_nodes, job_node_req, preemptee_candidates);
+ 	} else if (mode == SELECT_MODE_RUN_NOW) {
+ 		rc = _run_now(job_ptr, node_bitmap, min_nodes, max_nodes,
+ 			      req_nodes, job_node_req,
+diff --git a/src/plugins/select/cons_tres/select_cons_tres.c b/src/plugins/select/cons_tres/select_cons_tres.c
+index 0f5a66860f..90605875da 100644
+--- a/src/plugins/select/cons_tres/select_cons_tres.c
++++ b/src/plugins/select/cons_tres/select_cons_tres.c
+@@ -3,6 +3,7 @@
+  *  RESources (TRES) policies.
+  *****************************************************************************
+  *  Copyright (C) SchedMD LLC.
++ *  Copyright (C) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  *  Derived in large part from select/cons_res plugin
+  *
+  *  This file is part of Slurm, a resource management program.
+@@ -51,6 +52,7 @@
+ #include "select_cons_tres.h"
+ #include "job_test.h"
+ #include "dist_tasks.h"
++#include "globres.h"
+ 
+ #define _DEBUG 0	/* Enables module specific debugging */
+ #define NODEINFO_MAGIC 0x8a5d
+@@ -90,6 +92,7 @@ bool     gang_mode            = false;
+ bool     preempt_by_part      = false;
+ bool     preempt_by_qos       = false;
+ bool     spec_cores_first     = false;
++bool     globres_enabled      = false;
+ 
+ /*
+  * These variables are required by the generic plugin interface.  If they
+@@ -118,7 +121,7 @@ bool     spec_cores_first     = false;
+  */
+ const char plugin_name[] = "Trackable RESources (TRES) Selection plugin";
+ const char plugin_type[] = "select/cons_tres";
+-const uint32_t plugin_id      = SELECT_PLUGIN_CONS_TRES;
++const uint32_t plugin_id      = SELECT_PLUGIN_CONS_TRES;  // Must use the same plugin id as the original cons_tres
+ const uint32_t plugin_version = SLURM_VERSION_NUMBER;
+ const uint16_t nodeinfo_magic = 0x8a5d;
+ 
+@@ -190,6 +193,11 @@ extern int init(void)
+ 	else
+ 		gang_mode = false;
+ 
++	if (globres_init() == SLURM_SUCCESS)
++		globres_enabled = true;
++	else
++		globres_enabled = false;
++
+ 	verbose("%s loaded", plugin_type);
+ 
+ 	return SLURM_SUCCESS;
+@@ -207,6 +215,8 @@ extern void fini(void)
+ 	part_data_destroy_res(select_part_record);
+ 	select_part_record = NULL;
+ 	cr_fini_global_core_data();
++
++	globres_fini();
+ }
+ 
+ /* This is Part 1 of a 2-part procedure which can be found in
+@@ -376,7 +386,7 @@ extern int select_p_job_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
+ 
+ extern int select_p_job_begin(job_record_t *job_ptr)
+ {
+-	return SLURM_SUCCESS;
++	return globres_job_begin(job_ptr);
+ }
+ 
+ extern int select_p_job_ready(job_record_t *job_ptr)
+@@ -421,6 +431,9 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
+ 		return SLURM_ERROR;
+ 	}
+ 
++	if (globres_is_job_merge_valid(from_job_ptr, to_job_ptr) != SLURM_SUCCESS)
++		return SLURM_ERROR;
++
+ 	from_job_resrcs_ptr = from_job_ptr->job_resrcs;
+ 	if ((from_job_resrcs_ptr == NULL) ||
+ 	    (from_job_resrcs_ptr->cpus == NULL) ||
+@@ -614,6 +627,8 @@ extern int select_p_job_expand(job_record_t *from_job_ptr,
+ 
+ 	(void) job_res_add_job(to_job_ptr, JOB_RES_ACTION_NORMAL);
+ 
++	globres_job_update(to_job_ptr);
++
+ 	return SLURM_SUCCESS;
+ }
+ 
+@@ -745,6 +760,8 @@ extern int select_p_job_resized(job_record_t *job_ptr, node_record_t *node_ptr)
+ 		node_usage[node_ptr->index].node_state = NODE_CR_AVAILABLE;
+ 	}
+ 
++	globres_job_update(job_ptr);
++
+ 	return SLURM_SUCCESS;
+ }
+ 
+@@ -758,6 +775,8 @@ extern int select_p_job_fini(job_record_t *job_ptr)
+ 	job_res_rm_job(select_part_record, select_node_usage, NULL,
+ 		       job_ptr, JOB_RES_ACTION_NORMAL, NULL);
+ 
++	globres_job_finish(job_ptr);
++
+ 	return SLURM_SUCCESS;
+ }
+ 
+diff --git a/src/plugins/select/cons_tres/select_cons_tres.h b/src/plugins/select/cons_tres/select_cons_tres.h
+index 78adab636a..d959bc4b88 100644
+--- a/src/plugins/select/cons_tres/select_cons_tres.h
++++ b/src/plugins/select/cons_tres/select_cons_tres.h
+@@ -3,6 +3,7 @@
+  *  RESources (TRES) policies.
+  *****************************************************************************
+  *  Copyright (C) SchedMD LLC.
++ *  Copyright (C) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  *  Derived in large part from select/cons_res plugin
+  *
+  *  This file is part of Slurm, a resource management program.
+@@ -78,5 +79,6 @@ extern bool     preempt_by_part;
+ extern bool     preempt_by_qos;
+ extern bool     spec_cores_first;
+ extern bool     topo_optional;
++extern bool     globres_enabled;
+ 
+ #endif /* !_CONS_TRES_H */
+-- 
+2.51.0
+

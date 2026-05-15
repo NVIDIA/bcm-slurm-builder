@@ -1,0 +1,35 @@
+slurm (PKG_VERSION) stable; urgency=medium
+
+  * Upgrade to 25.11.5
+
+ -- Taras Shapovalov <tshapovalov@nvidia.com>  Wed, 8 Apr 2026 00:00:00 +0200
+
+slurm (25.11.4) stable; urgency=medium
+
+  * Upgrade to 25.11.4
+
+ -- Edmundo Carmona Antoranz <edmundoc@nvidia.com>  Mon, 30 Mar 2026 00:00:00 +0200
+
+slurm (25.11.3) stable; urgency=medium
+
+  * Upgrade to 25.11.3
+
+ -- Edmundo Carmona Antoranz <edmundoc@nvidia.com>  Fri, 20 Feb 2026 00:00:00 +0100
+
+slurm (25.11.2) stable; urgency=medium
+
+  * Upgrade to 25.11.2
+
+ -- Edmundo Carmona Antoranz <edmundoc@nvidia.com>  Wed, 14 Jan 2026 00:00:00 +0100
+
+slurm (25.11.1) stable; urgency=medium
+
+  * Upgrade to 25.11.1
+
+ -- Edmundo Carmona Antoranz <edmundoc@nvidia.com>  Mon, 05 Jan 2026 00:00:00 +0100
+
+slurm (25.11.0) stable; urgency=medium
+
+  * Initial Release
+
+ -- Edmundo Carmona Antoranz <edmundoc@nvidia.com>  Tue, 25 Nov 2025 00:00:00 +0100

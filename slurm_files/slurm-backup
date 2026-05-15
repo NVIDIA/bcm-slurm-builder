@@ -1,0 +1,239 @@
+#!/cm/local/apps/python3/bin/python
+
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import datetime
+import gzip
+import logging
+import os
+from pathlib import Path
+import re
+import shlex
+import shutil
+import smtplib
+import subprocess
+import sys
+
+import configobj
+
+SLURMDBD_CONFIG='/cm/shared/apps/slurm/etc/slurmdbd.conf'
+
+
+logging.getLogger().handlers.clear()
+logging.basicConfig(
+    filename='/var/log/slurm-backup.log',
+    format='(%(asctime)s) %(message)s',
+    datefmt='%y-%m-%d %H:%M:%S',
+    level=logging.INFO,
+)
+logger = logging.getLogger('slurm-backup')
+
+
+class CmMySQLDb:
+    """
+      Establish connection to MySQL database.
+
+      Arguments:
+      ----------
+      user     - MySQL user
+      passwd   - MySQL password for user
+      database - Default database to connect to
+      host     - MySQL server hostname (default is 'localhost')
+
+      Pre-requisites:
+      ---------------
+      None
+    """
+
+    def __init__(self, user: str = '', passwd: str = '', database: str = '', host: str = 'localhost', connect: bool = False):
+        self.connected = False
+        self.connect = connect
+        self.db = None
+        self.host = host
+        self.user = user if '\\' in user else re.escape(user)
+        self.passwd = passwd if '\\' in passwd else re.escape(passwd)
+        self.database = database
+        self.errors = []
+
+    def __enter__(self):
+        if self.connect:
+            self.__connect_to_database()
+            if not self.connected:
+                raise RuntimeError(f"Can't connect with database {self.database}")
+        return self
+
+    def __exit__(self, *args):
+        if self.connected:
+            self.__disconnect_from_database()
+
+    def print_errors(self):
+        print('\n'.join(self.errors))
+
+    def __get_db_version(self) -> float:
+        v = 5.0
+        try:
+            output = subprocess.check_output("mysql --version", shell=True).decode('utf-8')
+            version = float('.'.join(output.split()[output.split().index('Distrib') + 1].strip(',').split('.')[:2]))
+            return version
+        except Exception as ex:
+            self.errors.append(str(ex))
+            return v
+
+    def __connect_to_database(self):
+        """ Only accessible inside class CmMySQLDb """
+        args = (self.user, self.passwd, self.database)
+        try:
+            import MySQLdb
+
+            db = MySQLdb.connect(self.host, *args)
+            self.db = db.cursor()
+            self.connected = True
+        except Exception as ex:
+            self.connected = False
+            self.errors.append(str(ex))
+        """ Retry with TCP socket """
+        if not self.connected and self.host == 'localhost':
+            try:
+                db = MySQLdb.connect('127.0.0.1', *args)
+                self.db = db.cursor()
+                self.connected = True
+                self.errors.pop()
+            except Exception as ex:
+                self.connected = False
+                self.errors.append(str(ex))
+
+    def __disconnect_from_database(self):
+        """ Only accessible inside class CmMySQLDb """
+        try:
+            self.db.close()
+        except Exception as ex:
+            self.errors.append(f'Internal error while disconnecting from MySQL: {ex}')
+
+    def export_db_to_file(self, dbname: str, dumpfile: str, targethost: str = 'localhost', opts: str = '') -> bool:
+        """ Only accessible inside class CmMySQLDb  """
+        result = True
+        try:
+            exportdb = f"bash -c 'umask 077; mysqldump --defaults-extra-file=<( echo \"[client]\"; grep -E \"^Storage(Pass|User) *=\" {SLURMDBD_CONFIG} | sed \"s/StoragePass */password/;s/StorageUser */user/\" ) {opts} {dbname} -r {dumpfile}'"
+            if targethost != 'localhost':
+                exportdb = f'ssh {targethost} {shlex.quote(exportdb)}'
+            try:
+                subprocess.check_output(exportdb, shell=True)
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Subprocess error: {e!r}")
+                result = False
+                self.errors.append(str(e))
+            if targethost == 'localhost' and not os.path.isfile(dumpfile):
+                self.errors.append(f'Exported db dump file not found {dumpfile}')
+                result = False
+            if result:
+                logger.info(f"Db export to file: {dumpfile}")
+        except Exception as ex:
+            logger.error(f"Exception: {ex!r}")
+            result = False
+            self.errors.append(str(ex))
+        return result
+
+
+def send_mail(msg, subj: str = 'slurm_acct_db backup failed.', user: str = 'root'):
+    message = f'Subject: {subj}\n\n{msg}'
+    server = smtplib.SMTP('localhost')
+    server.sendmail('root', user, message)
+    server.quit()
+
+
+def is_active():
+    try:
+        with open('/var/spool/cmd/state') as f:
+            status = f.read().rstrip()
+            if status == 'ACTIVE':
+                logger.debug('Running on active master')
+                return True
+            return False
+    except Exception:
+        return False
+
+
+def main():
+    dbname = 'slurm_acct_db'
+    cmd_config = '/cm/local/apps/cmd/etc/cmd.conf'
+    if not (is_active() and Path(SLURMDBD_CONFIG).is_file()):
+        logger.debug('Nothing to do, not running on active master or config not available')
+        exit(1)
+    # get slurm db credentials, spooldir
+    try:
+        cfg = configobj.ConfigObj(SLURMDBD_CONFIG)
+        user, passwd = [cfg[x] for x in ('StorageUser', 'StoragePass')]
+    except SyntaxError as e:
+        send_mail(f'Error getting configuration details: {e}. Check {SLURMDBD_CONFIG} line {e.lineno}')
+        sys.exit(os.EX_CONFIG)
+    except Exception as e:
+        send_mail(f'Error getting configuration details: {e}.Check {SLURMDBD_CONFIG}')
+        sys.exit(os.EX_CONFIG)
+    try:
+        spooldir = configobj.ConfigObj(cmd_config)['SpoolDir']
+    except configobj.ConfigObjError as e:
+        try:
+            spooldir = e.config['SpoolDir']  # try to find the value among parsed
+        except KeyError as ex:
+            send_mail(f'Error getting {ex} value. Check {cmd_config}.')
+            sys.exit(os.EX_CONFIG)
+    except Exception as e:
+        send_mail(f'Error getting configuration details: {e}. Check {cmd_config} and {SLURMDBD_CONFIG}.')
+        sys.exit(os.EX_CONFIG)
+
+    # generate backup filename
+    date = datetime.datetime.now()
+    if len(sys.argv) > 1:
+        prefix = sys.argv[1]
+        da = date.strftime('%y-%m-%d-%H-%M-%S_%a')
+    else:
+        prefix = dbname
+        da = date.strftime('%a')
+    outdir = os.path.join(spooldir, 'backup')
+    outfile = os.path.join(outdir, f'{prefix}-{da}.sql')
+    gzfile = f'{outfile}.gz'
+
+    # Create output dir
+    os.makedirs(outdir, mode=0o700, exist_ok=True)
+    # Dump database
+    with CmMySQLDb(user, passwd, dbname, connect=False) as mydb:
+        if not mydb.export_db_to_file(dbname, outfile, opts=f'--single-transaction --ignore-table={dbname}.test___ --no-tablespaces'):
+            send_mail(f'mysqldump {dbname} failed. Make sure mysql is running', 'cmdaemon backup failed: mysql error.')
+            sys.exit(os.EX_SOFTWARE)
+
+    # Compress the backup file and change mode of the backup.
+    result = True
+    try:
+        with open(outfile, 'rb') as f_in:
+            with gzip.open(gzfile, 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+    except Exception:
+        result = False
+        send_mail(
+            f'Failed to gzip database backup. Is there enough space in /var?',
+            f'{dbname} backup failed: gzip error.',
+        )
+    finally:
+        os.remove(outfile)
+    if result is False:
+        sys.exit(os.EX_CANTCREAT)
+
+    os.chmod(gzfile, 0o600)
+
+
+if __name__ == "__main__":
+    main()
