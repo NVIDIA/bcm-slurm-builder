@@ -1,0 +1,92 @@
+# Working directory for enroot:
+{% if ENROOT_RUNTIME_PATH -%}
+ENROOT_RUNTIME_PATH {{ENROOT_RUNTIME_PATH}}/${SLURM_JOB_ID:-}{% else -%}
+# Enroot defaults are used for ENROOT_RUNTIME_PATH{% endif %}
+
+# Directory where container layers are stored:
+{% if ENROOT_CACHE_PATH -%}
+ENROOT_CACHE_PATH {{ENROOT_CACHE_PATH}}{% if not SHARE_CACHE -%}/$(id -u){% endif -%}{% else -%}
+# Enroot defaults are used for ENROOT_CACHE_PATH{% endif %}
+
+# Directory where the filesystems of running containers are stored:
+{% if ENROOT_DATA_PATH -%}
+ENROOT_DATA_PATH {{ENROOT_DATA_PATH}}/$(id -u){% else -%}
+# Enroot defaults are used for ENROOT_DATA_PATH{% endif %}
+
+# Path to temporary directory
+{% if ENROOT_TEMP_PATH -%}
+ENROOT_TEMP_PATH {{ENROOT_TEMP_PATH}}{% else -%}
+#ENROOT_TEMP_PATH ${TMPDIR:-/tmp}{% endif %}
+
+# Options passed to mksquashfs to produce container images.
+ENROOT_SQUASH_OPTIONS      -noI -noD -noF -noX -no-duplicates
+
+# Mount the current user's home directory by default.
+ENROOT_MOUNT_HOME          no
+
+# Path to user configuration files
+ENROOT_CONFIG_PATH         ${HOME}/.config/enroot
+
+# Restrict /dev inside the container to a minimal set of devices.
+ENROOT_RESTRICT_DEV        yes
+
+# Make the container root filesystem writable by default.
+ENROOT_ROOTFS_WRITABLE     no
+
+# Options passed to zstd to compress digest layers.
+ENROOT_ZSTD_OPTIONS        -1
+
+# Number of times network operations should be retried.
+ENROOT_TRANSFER_RETRIES    5
+
+# Maximum time in seconds to wait for connections establishment (0 means unlimited).
+ENROOT_CONNECT_TIMEOUT     60
+
+# Maximum time in seconds to wait for network operations to complete (0 means unlimited).
+ENROOT_TRANSFER_TIMEOUT    1200
+
+# Maximum number of concurrent connections (0 means unlimited).
+ENROOT_MAX_CONNECTIONS     10
+
+# Path to library sources
+#ENROOT_LIBRARY_PATH        /usr/lib/enroot
+
+# Path to system configuration file
+#ENROOT_SYSCONF_PATH        /etc/enroot
+
+# Gzip program used to uncompress digest layers.
+#ENROOT_GZIP_PROGRAM        gzip
+
+# Remap the current user to root inside containers by default.
+#ENROOT_REMAP_ROOT          no
+
+# Maximum number of processors to use for parallel tasks (0 means unlimited).
+#ENROOT_MAX_PROCESSORS      $(nproc)
+
+# Use a login shell to run the container initialization.
+#ENROOT_LOGIN_SHELL         yes
+
+# Allow root to retain his superuser privileges inside containers.
+#ENROOT_ALLOW_SUPERUSER     no
+
+# Use HTTP for outgoing requests instead of HTTPS (UNSECURE!).
+#ENROOT_ALLOW_HTTP          no
+
+# Include user-specific configuration inside bundles by default.
+#ENROOT_BUNDLE_ALL          no
+
+# Generate an embedded checksum inside bundles by default.
+#ENROOT_BUNDLE_CHECKSUM     no
+
+# Always use --force on command invocations.
+#ENROOT_FORCE_OVERRIDE      no
+
+# SSL certificates settings
+#SSL_CERT_DIR
+#SSL_CERT_FILE
+
+# Proxy settings
+#all_proxy
+#no_proxy
+#http_proxy
+#https_proxy

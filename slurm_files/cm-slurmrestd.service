@@ -1,0 +1,17 @@
+[Unit]
+RequiresMountsFor=/cm/shared
+Description=Slurm REST daemon
+After=network-online.target munge.service slurmctld.service
+Wants=network-online.target
+
+[Service]
+User=daemon
+Type=simple
+EnvironmentFile=-/etc/sysconfig/slurmrestd
+Environment="SLURM_JWT=daemon"
+ExecStart=/cm/local/apps/slurm/current/sbin/slurmrestd $SLURMRESTD_OPTIONS
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+

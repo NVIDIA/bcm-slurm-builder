@@ -1,0 +1,303 @@
+# START MANAGED SECTION
+# This section, if present, in the future will be managed by BCM CI tooling.
+# Add you custom entries outside of this section
+################################################################################
+# OS / Editor / IDE
+################################################################################
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.orig
+*.rej
+
+################################################################################
+# Project-specific (from your list)
+################################################################################
+# For running FTs (needed by bci.ft module)
+functional-test/
+.ft
+install-custom-packages-*
+
+# temp dirs created by frontend e2e tests (needed by bci.ft module)
+playwright-output/
+bright-frontend/
+
+# Local temporary dir
+.tmp/
+.novaclient
+.cm-cod*
+docker-image-info.txt
+
+# Taskfile related
+.task
+Taskfile-optional.yaml
+Taskfile.optional.yaml
+
+# pytest testmon
+.testmondata*
+
+# Scratchpad temp files for notes and code
+temp.txt
+temp.py
+
+# Some CI jobs, when run locally, drop artifacts into this dir
+artifacts/
+
+# Any log files
+*.log
+
+# Misc local tooling
+.bin/
+
+################################################################################
+# Python
+################################################################################
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Bytecode / compiled extensions
+*.so
+*.pyd
+*.dll
+*.dylib
+
+# Packaging / build
+.Python
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual envs
+.env
+.envrc
+.env.*
+.venv
+.venv.*
+env/
+venv/
+ENV/
+.python-version
+
+# Type checking / analysis
+.mypy_cache/
+.pytype/
+.pyre/
+.pyright/
+.ruff_cache/
+
+# Linters / formatters / tooling caches
+.cache/
+pip-wheel-metadata/
+pip-log.txt
+pdm.lock
+poetry.lock
+
+# uv (keep if you want lock committed; many teams *do* commit uv.lock)
+.uv/
+uv-cache/
+# uv.lock
+
+# Coverage / test outputs
+.coverage
+.coverage.*
+coverage.xml
+nosetests.xml
+htmlcov/
+*.cover
+*.py,cover
+cover/
+.pytest_cache/
+.tox/
+.nox/
+.hypothesis/
+junit*.xml
+
+# pytest-testmon (in addition to your wildcard)
+.testmondata
+.testmondata*
+
+# Local runtime
+*.pid
+*.seed
+
+################################################################################
+# Ruff/Mypy/Pytest “generic cache” (your existing pattern, kept)
+################################################################################
+.*_cache
+
+################################################################################
+# Jupyter / notebooks
+################################################################################
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+################################################################################
+# Node / JavaScript / TypeScript
+################################################################################
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm/
+.yarn/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+
+# Framework-specific
+.next/
+.nuxt/
+.svelte-kit/
+.vite/
+.vite-cache/
+.parcel-cache/
+.cache/
+
+# TypeScript
+*.tsbuildinfo
+
+# Env files (JS too)
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+################################################################################
+# Frontend testing
+################################################################################
+# Playwright (you already have playwright-output/)
+test-results/
+playwright-report/
+.cypress/
+cypress/screenshots/
+cypress/videos/
+
+################################################################################
+# Docker / containers / local orchestration
+################################################################################
+# General
+docker-compose.override.yml
+*.env.docker
+
+# Local build outputs / caches
+**/.docker/
+**/.docker-cache/
+**/docker-cache/
+**/.buildx-cache/
+**/buildx-cache/
+**/.kaniko-cache/
+**/.cache/buildkit/
+
+# Image tarballs
+*.tar
+*.tar.gz
+*.tgz
+
+################################################################################
+# Terraform / IaC (common in infra repos)
+################################################################################
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+################################################################################
+# Ansible (common local outputs)
+################################################################################
+*.retry
+.retry/
+ansible.log
+
+################################################################################
+# Kubernetes / Helm (common local outputs)
+################################################################################
+charts/**/charts/
+charts/**/tmp/
+*.tgz
+
+################################################################################
+# Secrets / local creds (belt & suspenders)
+################################################################################
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+
+
+################################################################################
+# Misc
+################################################################################
+# Archives
+*.zip
+*.7z
+*.rar
+
+# SQLite / local dbs
+*.sqlite
+*.sqlite3
+
+# Local profiling
+profiler.*
+*.prof
+*.lprof
+# END MANAGED SECTION
+
+.bc_revision
+# directories used for building slurm
+rpmbuild
+/slurm-*
+# packages
+*.deb
+*.rpm
+# tarballs
+*.tgz
+*.bz2
+*.tar.gz

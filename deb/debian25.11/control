@@ -1,0 +1,173 @@
+Source: slurm
+Section: devel
+Priority: optional
+Maintainer: dev <dev@brightcomputing.com>
+Standards-Version: 3.9.8
+Build-Depends: debhelper (>= 9),
+ dh-autoreconf,
+ gettext,
+ quilt,
+ texinfo,
+ libreadline-dev | libreadline6-dev ,
+ openssl (>= 0.9.6),
+ libssl-dev,
+ libssl3,
+ libmysqlclient-dev,
+ libmysqlclient21,
+ libmysqld-dev,
+ libmunge-dev,
+ libmunge2,
+ liblua5.1-0,
+ liblua5.1-0-dev,
+ lua5.1,
+ libpam0g-dev,
+ libgtk2.0-dev,
+ ncurses-dev,
+ cm-ucx-local,
+ libjson-c-dev,
+ libhttp-parser-dev,
+ JWT_LIB_DEV,
+ cm-pmix4-local,
+ cm-pmix3-local,
+ linux-headers-generic,
+ libdbus-1-dev,
+Homepage: https://slurm.schedmd.com/
+
+Package: slurmSLURM_MAJOR_VERSION
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION)
+Provides: slurm (= SLURM_FULL_VERSION)
+Conflicts: slurm (<< SLURM_MAJOR_VERSION), slurm (>> SLURM_MAJOR_VERSION)
+Description: Slurm is an open source, fault-tolerant, and highly scalable
+ cluster management and job scheduling system for Linux clusters.
+ Components include machine status, partition management,
+ job management, scheduling and accounting modules
+
+Package: slurmSLURM_MAJOR_VERSION-perlapi
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-perlapi (= SLURM_FULL_VERSION)
+Conflicts: slurm-perlapi (<< SLURM_MAJOR_VERSION), slurm-perlapi (>> SLURM_MAJOR_VERSION)
+Description: Perl API package for Slurm.
+ This package includes the perl API to provide a
+ helpful interface to Slurm through Perl.
+
+Package: slurmSLURM_MAJOR_VERSION-devel
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-devel (= SLURM_FULL_VERSION)
+Conflicts: slurm-devel (<< SLURM_MAJOR_VERSION), slurm-devel (>> SLURM_MAJOR_VERSION)
+Description: Development package for Slurm.
+ Development package for Slurm.  This package includes the header files
+ and static libraries for the Slurm API.
+
+Package: slurmSLURM_MAJOR_VERSION-slurmd
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), munge, slurmSLURM_MAJOR_VERSION
+Provides: slurm-slurmd (= SLURM_FULL_VERSION)
+Conflicts: slurm-slurmd (<< SLURM_MAJOR_VERSION), slurm-slurmd (>> SLURM_MAJOR_VERSION)
+Description: Slurm compute node daemon.
+ Used to launch jobs on compute nodes.
+
+Package: slurmSLURM_MAJOR_VERSION-slurmctld
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), libssh2-1, slurmSLURM_MAJOR_VERSION
+Provides: slurm-slurmctld (= SLURM_FULL_VERSION)
+Conflicts: slurm-slurmctld (<< SLURM_MAJOR_VERSION), slurm-slurmctld (>> SLURM_MAJOR_VERSION)
+Description: Slurm controller daemon
+ Used to manage the job queue, schedule jobs, and dispatch RPC messages to the slurmd
+ processon the compute nodes to launch jobs.
+
+Package: slurmSLURM_MAJOR_VERSION-slurmdbd
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-slurmdbd (= SLURM_FULL_VERSION)
+Conflicts: slurm-slurmdbd (<< SLURM_MAJOR_VERSION), slurm-slurmdbd (>> SLURM_MAJOR_VERSION)
+Description: Slurm database daemon
+ Slurm database daemon. Used to accept and process database RPCs and upload
+ database changes to slurmctld daemons on each cluster
+
+Package: slurmSLURM_MAJOR_VERSION-torque
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-torque (= SLURM_FULL_VERSION)
+Conflicts: slurm-torque (<< SLURM_MAJOR_VERSION), slurm-torque (>> SLURM_MAJOR_VERSION)
+Description: Torque/PBS wrappers for transitition from Torque/PBS to Slurm.
+ Torque wrapper scripts used for helping migrate from Torque/PBS to Slurm.
+
+Package: slurmSLURM_MAJOR_VERSION-openlava
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-openlava (= SLURM_FULL_VERSION)
+Conflicts: slurm-openlava (<< SLURM_MAJOR_VERSION), slurm-openlava (>> SLURM_MAJOR_VERSION)
+Description: openlava/LSF wrappers for transitition from OpenLava/LSF to Slurm
+ OpenLava wrapper scripts used for helping migrate from OpenLava/LSF to Slurm
+
+Package: slurmSLURM_MAJOR_VERSION-contribs
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-contribs (= SLURM_FULL_VERSION)
+Conflicts: slurm-contribs (<< SLURM_MAJOR_VERSION), slurm-contribs (>> SLURM_MAJOR_VERSION)
+Description: seff is a mail program used directly by the Slurm daemons. On completion of a
+ job, wait for it's accounting information to be available and include that
+ information in the email body.
+ sjobexit is a slurm job exit code management tool. It enables users to alter
+ job exit code information for completed jobs
+ sjstat is a Perl tool to print Slurm job state information. The output is designed
+ to give information on the resource usage and availablilty, as well as information
+ about jobs that are currently active on the machine. This output is built
+ using the Slurm utilities, sinfo, squeue and scontrol, the man pages for these
+ utilities will provide more information and greater depth of understanding.
+
+Package: slurmSLURM_MAJOR_VERSION-pam
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-pam (= SLURM_FULL_VERSION)
+Conflicts: slurm-pam (<< SLURM_MAJOR_VERSION), slurm-pam (>> SLURM_MAJOR_VERSION)
+Description: This module restricts access to compute nodes in a cluster where the Simple
+ Linux Utility for Resource Managment (Slurm) is in use.  Access is granted
+ to root, any user with a Slurm-launched job currently running on the node,
+ or any user who has allocated resources on the node according to the Slurm
+
+Package: slurmSLURM_MAJOR_VERSION-slurmrestd
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), libhttp-parser2.9, JWT_LIB, slurmSLURM_MAJOR_VERSION
+Provides: slurm-slurmrestd (= SLURM_FULL_VERSION)
+Conflicts: slurm-slurmrestd (<< SLURM_MAJOR_VERSION), slurm-slurmrestd (>> SLURM_MAJOR_VERSION)
+Description: Provides a REST interface to Slurm.
+
+Package: slurmSLURM_MAJOR_VERSION-sackd
+Architecture: any
+Essential: no
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-sackd (= SLURM_FULL_VERSION)
+Conflicts: slurm-sackd (<< SLURM_MAJOR_VERSION), slurm-sackd (>> SLURM_MAJOR_VERSION)
+Description: Slurm authentication daemon.
+ Used on login nodes that are not running slurmd daemons to allow authentication
+ to the cluster.
+
+Package: slurmSLURM_MAJOR_VERSION-libpmi
+Architecture: any
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-libpmi (= SLURM_FULL_VERSION)
+Conflicts: slurm-libpmi (<< SLURM_MAJOR_VERSION)
+Description: Slurm's version of libpmi. For systems using Slurm, this version
+ is preferred over the compatibility libraries shipped by the PMIx project.
+
+Package: slurmSLURM_MAJOR_VERSION-prs
+Architecture: any
+Depends: cm-config-cm (= CM_CONFIG_CM_VERSION), slurmSLURM_MAJOR_VERSION
+Provides: slurm-prs (= SLURM_FULL_VERSION)
+Conflicts: slurm-prs (<< SLURM_MAJOR_VERSION)
+Description: Slurm PRS plugin.

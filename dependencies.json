@@ -1,0 +1,20 @@
+{
+  "rhel9": {
+    "slurm2511": {
+      "packages": "cm-hwloc2 cm-pmix3 cm-pmix4 cm-ucx cuda12.8-toolkit dbus-devel freeipmi-devel gtk2-devel http-parser-devel json-c-devel libjwt-devel libyaml-devel lua-devel lz4-devel munge-devel nvidia-driver-NVML numactl-devel pam-devel readline-devel",
+      "modules": "cuda12.8/toolkit"
+    }
+  },
+  "ubuntu22": {
+    "slurm2511": {
+      "packages": "cuda12.8-toolkit libcurl4-openssl-dev libdbus-1-dev libgtk2.0-dev libjson-c-dev libjwt-dev liblua5.1-0-dev liblz4-dev libmunge-dev libnvidia-ml-dev libpam0g-dev libreadline-dev libyaml-dev",
+      "modules": "cuda12.8/toolkit"
+    }
+  },
+  "ubuntu24": {
+    "slurm2511": {
+      "packages": "cm-hwloc2 cm-pmix3 cm-pmix4 cm-ucx cuda12.8-toolkit libcurl4-openssl-dev libdbus-1-dev libgtk2.0-dev libjson-c-dev libjwt-dev liblua5.1-0-dev liblz4-dev libmunge-dev libnvidia-ml-dev libpam0g-dev libreadline-dev libyaml-dev",
+      "modules": "cuda12.8/toolkit"
+    }
+  }
+}

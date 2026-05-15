@@ -1,154 +1,106 @@
-# __NVIDIA_OSS__ Standard Repo Template
-
-This README file is from the NVIDIA_OSS standard repo template of [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file). It provides a list of files in the PLC-OSS-Template and guidelines on how to use (clone and customize) them.
-
-**Upon completing the customization for the project repo, the repo admin should replace this README template with the project specific README file.**
-
-- Files (org-wide templates in the NVIDIA .github org repo; per-repo overrides allowed) in [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file)
-
-   - Root 
-     - README.md skeleton (CTA + Quickstart + Support/Security/Governance links) 
-     - LICENSE (Apache 2.0 by default)
-        - For other licenses, see the [Confluence page](https://confluence.nvidia.com/pages/viewpage.action?pageId=788418816) for other licenses
-        - CLA.md file (delete if not using MIT or BSD licenses)
-     - CODE_OF_CONDUCT.md 
-     - SECURITY.md (vuln reporting path) 
-     - CONTRIBUTING.md (base; repo can add specifics)
-     - SUPPORT.md (Support levels/channels)
-     - GOVERNANCE.md (baseline; repo may extend)
-     - CITATION.md (for projects that need citation)
-
-   - .github/ 
-     - ISSUE_TEMPLATE/ (<https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/configuring-issue-templates-for-your-repository>)
-       - bug.yml, feature.yml, task.yml, config.yml 
-     - PULL_REQUEST_TEMPLATE.md (<https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/creating-a-pull-request-template-for-your-repository>)
-     - workflows/
-     - Note: workflow-templates/ for starter workflows should live in the org-level .github repo, not per-repo
-
-   - Repo-specific (not org-template, maintained by the team)
-     - CODEOWNERS (place at .github/CODEOWNERS or repo root)
-     - CHANGELOG.md (or RELEASE.md) 
-     - ROADMAP.md 
-     - MAINTAINERS.md 
-     - NOTICE or THIRD_PARTY_NOTICES / THIRD_PARTY_LICENSES (dependency specific)
-     - Build/package files (CMake, pyproject, Dockerfile, etc.)
-
-   - Recommended structure and hygiene
-     - docs/
-     - examples/
-     - tests/
-     - scripts/
-     - Container/dev env: Dockerfile, docker/, .devcontainer/ (optional)
-     - Build/package (language-specific):
-       - Python: pyproject.toml, setup.cfg/setup.py, requirements.txt, environment.yml
-       - C++: CMakeLists.txt, cmake/, vcpkg.json
-     - Repo hygiene: .gitignore, .gitattributes, .editorconfig, .pre-commit-config.yaml, .clang-format
-
-
-## Usage of [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file) for NEW NVIDIA OSS repos
-
-1. Clone the [PLC-OSS-Template](https://github.com/NVIDIA-GitHub-Management/PLC-OSS-Template?tab=readme-ov-file)
-2. Find/replace all in the clone of `___PROJECT___` and `__PROJECT_NAME__` with the name of the specific project.
-3. Inspect all files to make sure all replacements work and update text as needed
-
-
-**What you can reuse immediately**
-- CODE_OF_CONDUCT.md
-- SECURITY.md
-- CONTRIBUTING.md (base)
-- .github/ISSUE_TEMPLATE/.yml (bug/feature/task + config.yml)
-- .github/PULL_REQUEST_TEMPLATE.md
-- Reusable workflows 
-
-**What you must customize per repo**
-- README.md: copy the skeleton and fill in product-specific details (Quickstart, Requirements, Usage, Support level, links)
-- LICENSE: check file is correct, update year, consult Confluence for alternatives https://confluence.nvidia.com/pages/viewpage.action?pageId=788418816, add CLA.md only if your license/process requires it
-- CODEOWNERS: replace <TEAM> with your GitHub team handle(s). Place at .github/CODEOWNERS (or repo root)
-- MAINTAINERS.md: list maintainers names/roles, escalation path
-- CHANGELOG.md (or RELEASE.md): track releases/changes
-- SUPPORT.md: Update for your project
-- ROADMAP.md (optional): upcoming milestones
-- NOTICE / THIRD_PARTY_NOTICES (if you ship third‑party content)
-- Build/package files (CMake/pyproject/Dockerfile/etc.), tests/, docs/, examples/, scripts/ as appropriate
-- Workflows: Edit if you need custom behavior 
-
-
-4. Change git origin to point to new repo and push
-5. Remove the line break below and everything above it
-
-## Usage for existing NVIDIA OSS repos
-
-1. Follow the steps above, but add the files to your existing repo and merge
-
-<!-- REMOVE THE LINE BELOW AND EVERYTHING ABOVE -->
------------------------------------------
-# [Project Title]
-One-sentence value proposition for users. Who is it for, and why it matters. 
+# bcm-slurm-builder
+Tool to build slurm packages for use in a BCM cluster.
 
 # Overview
-What the project does? Why the project is useful?
-Provide a brief overview, highlighting key features or problem-solving capabilities.
+BCM clusters use custom-built slurm packages. This project allows
+building slurm packages for BCM clusters from upstream code.
 
-# Getting Started
-Guide users on how they can get started with the project. This should include basic installation step, quick-start examples 
-```bash
-# Option A: Package manager (pip/conda/npm/etc.)
-<copy-paste install>
-
-# Option B: Container
-docker run <image> <args>
-
-# Verify (hello world)
-<one-liner or ~10-line example>
-```
 # Requirements
-Include a list of pre-requisites. 
-- OS/Arch: <summary or link to full matrix>
-- Runtime/Compiler: <versions>
-- GPU/Drivers (if applicable): CUDA <ver>, driver <ver>, etc.
+- A BCM 11.0 cluster.
+
+## BCM cluster distros
+- RHEL9
+- Ubuntu 22.04
+- Ubuntu 24.04
+
+## Slurm versions
+- 25.11.x
 
 # Usage
-```bash
-# Minimal runnable snippet (≤20 lines)
-<code>
+Download the project's tarball and expand it somewhere in the cluster's head node.
+
+Place yourself inside the directory of the `bcm slurm builder` project. Then run the script `./build.sh`
+providing the slurm version you would like to build as a parameter. The build process will take care
+of downloading the slurm source tarball and installing the necessary dependencies to be able to carry out
+building the packages. When the process is finished, the resulting packages will be in the same directory
+where `./build.sh` was called from.
+
+Building on compute nodes is **not** supported at the time.
+
+## Sample run
+Here's one sample run using a BCM 11.32.0 cluster running on Ubuntu 24.04.
+
 ```
-- More examples/tutorials: <link>
-- API reference: <link>
+root@u24-slurm-builder:~/bcm-slurm-builder# ls -l
+total 16
+-rwxrwxr-x 1 root root 6512 Apr 13 06:09 build.sh
+drwxrwxr-x 3 root root   25 Apr 13 06:09 deb
+-rw-rw-r-- 1 root root  959 Apr 13 06:09 dependencies.json
+drwxrwxr-x 2 root root  180 Apr 13 06:09 pyxis
+drwxrwxr-x 2 root root   29 Apr 13 06:09 rpm
+drwxrwxr-x 2 root root   87 Apr 13 06:09 scripts
+drwxrwxr-x 3 root root 4096 Apr 13 06:09 slurm_files
+root@u24-slurm-builder:~/bcm-slurm-builder# ./build.sh 25.11.5
++ . /etc/os-release
+++ PRETTY_NAME='Ubuntu 24.04.3 LTS'
+++ NAME=Ubuntu
+++ VERSION_ID=24.04
+++ VERSION='24.04.3 LTS (Noble Numbat)'
+++ VERSION_CODENAME=noble
+++ ID=ubuntu
+++ ID_LIKE=debian
+++ HOME_URL=https://www.ubuntu.com/
+++ SUPPORT_URL=https://help.ubuntu.com/
+++ BUG_REPORT_URL=https://bugs.launchpad.net/ubuntu/
+++ PRIVACY_POLICY_URL=https://www.ubuntu.com/legal/terms-and-policies/privacy-policy
+++ UBUNTU_CODENAME=noble
+++ LOGO=ubuntu-logo
+.
+.
+.
+dpkg-deb: building package 'slurm25.11-libpmi' in '../slurm25.11-libpmi_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb'.
+dpkg-deb: building package 'slurm25.11-prs' in '../slurm25.11-prs_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb'.
++ '[' 0 -ne 0 ']'
++ cd -
+/root/bcm-slurm-builder
++ set +x
+slurm25.11_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-contribs_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-devel_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-libpmi_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-openlava_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-pam_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-perlapi_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-prs_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-sackd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-slurmctld_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-slurmd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-slurmdbd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-slurmrestd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+slurm25.11-torque_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+root@u24-slurm-builder:~/bcm-slurm-builder# ls -l *.deb
+-rw-r--r-- 1 root root 63186972 Apr 15 05:01 slurm25.11_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root    12202 Apr 15 05:01 slurm25.11-contribs_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root    76814 Apr 15 05:01 slurm25.11-devel_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   258832 Apr 15 05:01 slurm25.11-libpmi_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root     6708 Apr 15 05:01 slurm25.11-openlava_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   151694 Apr 15 05:01 slurm25.11-pam_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   914528 Apr 15 05:01 slurm25.11-perlapi_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   930466 Apr 15 05:01 slurm25.11-prs_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   100420 Apr 15 05:01 slurm25.11-sackd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root  1727272 Apr 15 05:01 slurm25.11-slurmctld_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   445422 Apr 15 05:01 slurm25.11-slurmd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   211380 Apr 15 05:01 slurm25.11-slurmdbd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   183122 Apr 15 05:01 slurm25.11-slurmrestd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+-rw-r--r-- 1 root root   128048 Apr 15 05:01 slurm25.11-torque_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
+```
 
-# Performance (Optional)
-Summary of benchmarks; link to detailed results and hardware used.
-
-## Releases & Roadmap 
-- Releases/Changelog: <link>
-- (Optional) Next milestones or link to `ROADMAP.md`.
-  
 # Contribution Guidelines
-- Start here: `CONTRIBUTING.md`
-- Code of Conduct: `CODE_OF_CONDUCT.md`
-- Development quickstart (build/test):
-```bash
-<clone> && <deps> && <build/test>
-```
-## Governance & Maintainers
-- Governance: `GOVERNANCE.md`
-- Maintainers: <team/handles>
-- Labeling/triage policy: <link>
+- Check [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
-- Vulnerability disclosure: `SECURITY.md`
+- To make a Vulnerability disclosure, check [SECURITY.md](SECURITY.md).
 - Do not file public issues for security reports.
 
-## Support
-- Level: <Experimental | Maintained | Stable>
-- How to get help: Issues/Discussions/<channel link>
-- Response expectations (if any).
-
-# Community
-Provide the channel for community communications.
-
-# References
-Provide a list of related references
-
 # License
-This project is licensed under the [NAME HERE] License - see the LICENSE.md file for details
-- License: <link>
+This project is licensed under the [Apache 2.0 License](LICENSE-apache2.0.txt) - Check [LICENSING.md](LICENSING.md) for details.

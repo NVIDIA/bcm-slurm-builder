@@ -1,0 +1,1 @@
+required /cm/local/apps/slurm/current/lib64/slurm/spank_pyxis.so execute_entrypoint=0 container_scope=global sbatch_support=1

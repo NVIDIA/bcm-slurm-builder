@@ -1,0 +1,27 @@
+#%Module1.0#######################################################################
+## slurm modulefile
+##
+proc ModulesHelp { } {
+  puts stderr "\tAdds Slurm to your environment"
+}
+
+module-whatis   "Adds Slurm to your environment"
+
+set              slurm_root            ${PREFIX}
+
+setenv           CMD_WLM_CLUSTER_NAME  ${CMD_WLM_CLUSTER_NAME}
+setenv           SLURM_CONF            ${SLURM_ETC}/slurm.conf
+setenv           CGROUP_CONF           ${SLURM_ETC}/cgroup.conf
+setenv           GRES_CONF             ${SLURM_ETC}/gres.conf
+setenv           TOPOLOGY_CONF         ${SLURM_ETC}/topology.conf
+setenv           SLURMDBD_CONF         ${SLURM_ETC}/slurmdbd.conf
+
+prepend-path     PATH                  $slurm_root/bin
+prepend-path     PATH                  $slurm_root/sbin
+prepend-path     PATH                  $slurm_root/scripts
+prepend-path     MANPATH               $slurm_root/man
+prepend-path     LD_LIBRARY_PATH       $slurm_root/lib64
+prepend-path     LD_LIBRARY_PATH       $slurm_root/lib64/slurm
+prepend-path     LIBRARY_PATH          $slurm_root/lib64
+prepend-path     LIBRARY_PATH          $slurm_root/lib64/slurm
+prepend-path     CPATH                 $slurm_root/include

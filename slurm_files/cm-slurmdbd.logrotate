@@ -1,0 +1,17 @@
+/var/log/slurmdbd {
+  compress
+  missingok
+  nocopytruncate
+  delaycompress
+  nomail
+  notifempty
+  noolddir
+  dateext
+  rotate 5
+  sharedscripts
+  size=10M
+  create 640 slurm root
+  postrotate
+  killall -SIGUSR2 slurmdbd
+  endscript
+}
