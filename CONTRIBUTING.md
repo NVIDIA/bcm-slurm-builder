@@ -1,5 +1,8 @@
 
 ## bcm-slurm-builder OSS Contribution Rules
+#### Notice
+`bcm-slurm-builder` follows internal roadmaps and development priorities. Contributions from the community are welcome
+but, in order for them to be accepted, they need to fit within the project's internal goals.
 
 #### Issue Tracking
 

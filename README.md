@@ -1,6 +1,16 @@
 # bcm-slurm-builder
 Tool to build slurm packages for use in a BCM cluster.
 
+# Contribution Guidelines
+`bcm-slurm-builder` follows internal roadmaps and development priorities. Contributions from the community are welcome
+but, in order for them to be accepted, they need to fit within the project's internal goals.
+
+If you want to read more about how to contribute to the project, please, check [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Security
+- To make a Vulnerability disclosure, check [SECURITY.md](SECURITY.md).
+- Do not file public issues for security reports.
+
 # Overview
 BCM clusters use custom-built slurm packages. This project allows
 building slurm packages for BCM clusters from upstream code.
@@ -94,13 +104,6 @@ root@u24-slurm-builder:~/bcm-slurm-builder# ls -l *.deb
 -rw-r--r-- 1 root root   183122 Apr 15 05:01 slurm25.11-slurmrestd_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
 -rw-r--r-- 1 root root   128048 Apr 15 05:01 slurm25.11-torque_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
 ```
-
-# Contribution Guidelines
-- Check [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Security
-- To make a Vulnerability disclosure, check [SECURITY.md](SECURITY.md).
-- Do not file public issues for security reports.
 
 # License
 This project is licensed under the [Apache 2.0 License](LICENSE-apache2.0.txt) - Check [LICENSING.md](LICENSING.md) for details.
