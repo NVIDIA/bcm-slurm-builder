@@ -105,5 +105,14 @@ root@u24-slurm-builder:~/bcm-slurm-builder# ls -l *.deb
 -rw-r--r-- 1 root root   128048 Apr 15 05:01 slurm25.11-torque_25.11.5-200001-cm11.0-5bf9efcb4e_amd64.deb
 ```
 
+## custom tarball
+It is possible to provide a custom tarball for building slurm. The path to the tarball must be provided
+as an _additional_ parameter to `build.sh` (on top of the slurm version). So, if you are building version
+`25.11.4` from a tarball, you have to call `build.sh` like this:
+```
+./build.sh 25.11.4 <path-to-tarball>
+```
+And, for this example, the slurm sources are expected to be within the tarball's top level directory `slurm-25.11.4`.
+
 # License
 This project is licensed under the [Apache 2.0 License](LICENSE-apache2.0.txt) - Check [LICENSING.md](LICENSING.md) for details.
